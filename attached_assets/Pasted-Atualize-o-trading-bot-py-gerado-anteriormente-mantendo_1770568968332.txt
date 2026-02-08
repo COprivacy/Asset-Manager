@@ -1,0 +1,25 @@
+Atualize o trading_bot.py gerado anteriormente, mantendo o dashboard web (com Flask ou similar para visualizar sinais em tempo real), o menu interativo no console, as estratégias existentes (RSI, SMA Crossover, Combinada), a conexão com IQ Option API (use a instalação que já está funcionando, como git+https://github.com/iqoptionapi/iqoptionapi.git), modo DEMO obrigatório, análise em tempo real a cada ~60s, feedback de vitórias (win rate, streak, ranking de ativos), registro em lista/CSV e verificação de resultados com check_win.
+
+Adições e melhorias obrigatórias:
+
+1. Novas estratégias probabilísticas (adicione ao menu de escolha, com cálculo de probabilidade baseado em backtest dos últimos 100 candles):
+   - MHI (Milhões em Horas Iniciais): Analise as últimas 3 candles em M1. Se maioria vermelha (baixa), sinal PUT; maioria verde (alta), sinal CALL. Variação MHI2: Inverter a maioria (minoria). Confiança baseada em % de acertos históricos.
+   - Padrão 23: Em ciclos de 5 min (M1), use a 1ª vela como referência; entre na 2ª vela na mesma direção (se 1ª verde, CALL na 2ª; se vermelha, PUT). WIN se 2ª igual à 1ª. Backtest para probabilidade.
+   - Torres Gêmeas: Duas candles seguidas na mesma direção (ex: duas verdes → CALL na terceira; duas vermelhas → PUT).
+   - Price Action Simples: Detecte padrões como Engulfing (vela atual engole a anterior em direção oposta) para reversão.
+   - Permita escolher "Todas" para rodar múltiplas e mostrar a com maior confiança.
+
+2. Suporte a ativos OTC:
+   - No menu, adicione opção: "Incluir ativos OTC? (S/N)" – Se sim, filtre e priorize ativos como EURUSD-OTC, GBPUSD-OTC, etc., usando Iq.get_all_open_time() para listar só os abertos (OTC estão sempre abertos).
+   - Use timeframe M1 para estratégias como MHI e Padrão 23 (sincronize com fechamento de candles OTC).
+   - No dashboard, adicione coluna "Tipo de Ativo" (Normal/OTC) nos sinais recentes.
+
+3. Melhorias gerais:
+   - No dashboard, atualize para mostrar estratégia usada no sinal (ex: "MHI" ou "Padrão 23"), e volatilidade do mercado (simples: alta se variação >1% nos últimos 10 candles).
+   - Aumente o filtro de confiança mínima para 70% nas novas estratégias.
+   - Adicione opção no menu para timeframe (M1, M5) – estratégias como MHI e Padrão 23 usam M1 por default.
+   - Registre em CSV com colunas extras: Estratégia, Tipo Ativo (OTC/Normal), Probabilidade Histórica.
+   - Aviso maior no início e no dashboard: "SÓ DEMO! RISCO DE PERDA TOTAL. NÃO É CONSELHO FINANCEIRO."
+   - Use pandas_ta ou cálculos manuais para indicators em OTC candles (Iq.get_candles(asset, 60, 100, time.time())).
+
+Mantenha o código comentado em português, robusto com reconexão websocket, e threads para rodar bot + dashboard sem travar. Gere o trading_bot.py atualizado completo, pronto para rodar.

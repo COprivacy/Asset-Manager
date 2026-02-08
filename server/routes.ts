@@ -16,7 +16,12 @@ export async function registerRoutes(
 
   app.post(api.signals.create.path, async (req, res) => {
     try {
-      const input = api.signals.create.input.parse(req.body);
+      // Use z.coerce for any numeric fields that might come as strings
+      const input = api.signals.create.input.extend({
+        confidence: z.coerce.number(),
+        probability: z.coerce.number().optional(),
+      }).parse(req.body);
+      
       const signal = await storage.createSignal(input);
       res.status(201).json(signal);
     } catch (err) {
