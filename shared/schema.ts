@@ -1,18 +1,22 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
+export const signals = pgTable("signals", {
+  id: serial("id").primaryKey(),
+  asset: text("asset").notNull(),
+  action: text("action").notNull(), // CALL or PUT
+  strategy: text("strategy").notNull(), // RSI, SMA, Combined
+  confidence: integer("confidence").notNull(),
+  timestamp: timestamp("timestamp").defaultNow(),
+  result: text("result"), // WIN, LOSS, or PENDING
+  price: text("price"), // Entry price
 });
 
-export const insertUserSchema = createInsertSchema(users).pick({
-  username: true,
-  password: true,
+export const insertSignalSchema = createInsertSchema(signals).omit({ 
+  id: true, 
+  timestamp: true 
 });
 
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = typeof users.$inferSelect;
+export type Signal = typeof signals.$inferSelect;
+export type InsertSignal = z.infer<typeof insertSignalSchema>;
