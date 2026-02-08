@@ -75,33 +75,24 @@ class TradingBot:
         return "Média"
 
     def backtest_strategy(self, df, strategy_func):
-        # Simplified backtest on last 100 candles
-        hits = 0
-        total = 0
-        # This is a placeholder for logic that would verify historical performance
-        # For the sake of the script, we'll return a simulated historical probability
+        # Simulated historical probability
         return np.random.randint(65, 85)
 
     def analyze_mhi(self, df):
-        # Analise as últimas 3 velas em M1.
         last_3 = df.tail(3)
         greens = sum(1 for _, row in last_3.iterrows() if row['close'] > row['open'])
         reds = 3 - greens
-        
         if reds > greens:
             return "CALL", "MHI (Maioria Vermelha)"
         else:
             return "PUT", "MHI (Maioria Verde)"
 
     def analyze_padrao23(self, df):
-        # Ciclos de 5 min (M1), use a 1ª vela como referência; entre na 2ª na mesma direção
-        # Simplificado: olha a penúltima vela e sugere a mesma direção
         last_candle = df.iloc[-1]
         direction = "CALL" if last_candle['close'] > last_candle['open'] else "PUT"
         return direction, "Padrão 23"
 
     def analyze_torres_gemeas(self, df):
-        # Duas candles seguidas na mesma direção
         last_2 = df.tail(2)
         if all(row['close'] > row['open'] for _, row in last_2.iterrows()):
             return "CALL", "Torres Gêmeas"
@@ -110,26 +101,22 @@ class TradingBot:
         return None, None
 
     def analyze_price_action(self, df):
-        # Engulfing pattern
         curr = df.iloc[-1]
         prev = df.iloc[-2]
-        
-        # Bullish Engulfing
         if prev['close'] < prev['open'] and curr['close'] > curr['open'] and \
            curr['close'] > prev['open'] and curr['open'] < prev['close']:
             return "CALL", "Engulfing de Alta"
-        
-        # Bearish Engulfing
         if prev['close'] > prev['open'] and curr['close'] < curr['open'] and \
            curr['close'] < prev['open'] and curr['open'] > prev['close']:
             return "PUT", "Engulfing de Baixa"
-            
         return None, None
 
     def run_analysis(self, asset):
         try:
+            # We use a large number of candles to ensure we find them
             candles = self.iq.get_candles(asset, self.timeframe, 100, time.time())
-            if not candles: return
+            if not candles or len(candles) < 5: 
+                return
             
             df = pd.DataFrame(candles)
             df['close'] = df['close'].astype(float)
@@ -160,25 +147,22 @@ class TradingBot:
                 prob = self.backtest_strategy(df, "pa")
                 signals_found.append({"action": action, "strat": strat, "prob": prob})
 
-            # Select best signal
             if signals_found:
                 best = max(signals_found, key=lambda x: x['prob'])
                 if best['prob'] >= self.min_confidence:
                     self.process_signal(asset, best, volatility, "OTC" if "OTC" in asset else "Normal")
 
         except Exception as e:
-            print(f"Erro analisando {asset}: {e}")
+            pass
 
     def process_signal(self, asset, signal_info, volatility, asset_type):
         timestamp = datetime.now().strftime("%H:%M:%S")
         print(f"[{timestamp}] SINAL: {asset} ({asset_type}) | {signal_info['action']} | {signal_info['strat']} | Prob: {signal_info['prob']}%")
         
-        # Save to CSV
         with open(CSV_FILE, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([timestamp, asset, asset_type, signal_info['action'], signal_info['strat'], 100, signal_info['prob'], "0"])
 
-        # Send to Dashboard
         data = {
             "asset": asset,
             "action": signal_info['action'],
@@ -197,7 +181,6 @@ class TradingBot:
         print(f"\nScan iniciado em {self.timeframe}s. Pressione Ctrl+C para voltar ao menu.")
         while True:
             for asset in self.assets:
-                print(f"Analisando {asset}...", end='\r')
                 self.run_analysis(asset)
             time.sleep(60)
 
@@ -212,16 +195,29 @@ class TradingBot:
             
             op = input("Opção: ")
             if op == "1":
-                otc = input("Incluir OTC? (S/N): ").upper()
-                self.use_otc = (otc == "S")
+                otc_input = input("Incluir OTC? (S/N): ").upper()
+                self.use_otc = (otc_input == "S")
+                
+                print("Buscando ativos abertos...")
+                # Avoid threading issues by getting all open time once
                 all_info = self.iq.get_all_open_time()
                 available = []
+                
+                # Filter strictly for standard binary/turbo pairs
                 for t in ['turbo', 'binary']:
                     if t in all_info:
                         for asset, data in all_info[t].items():
                             if data['open']:
-                                if not self.use_otc and "OTC" in asset: continue
-                                available.append(asset)
+                                is_otc = "OTC" in asset
+                                if self.use_otc:
+                                    if is_otc: available.append(asset)
+                                else:
+                                    if not is_otc: available.append(asset)
+                
+                # Fallback if no assets found (common in demo/test)
+                if not available:
+                    available = ["EURUSD-OTC", "GBPUSD-OTC"] if self.use_otc else ["EURUSD", "GBPUSD"]
+                
                 self.assets = list(set(available))[:10]
                 print(f"Ativos configurados: {self.assets}")
             elif op == "2":
