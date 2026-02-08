@@ -1,0 +1,56 @@
+Crie um script Python completo e funcional no Replit para gerar sinais de opções binárias (OB/turbo/digital) exclusivamente para a IQ Option, usando a API não oficial mais estável e atualizada possível em 2025/2026.
+
+Priorize esta ordem de instalação (tente uma por uma até funcionar):
+
+1. !pip install -U git+https://github.com/iqoptionapi/iqoptionapi.git --upgrade   # community supported, mais usada
+2. Se der erro, tente: !pip install iqoptionapi-simple
+3. Alternativa async moderna: !pip install iqoption-async  (se for compatível com seu código)
+
+Use a importação padrão: from iqoptionapi.stable_api import IQ_Option   (é o mais comum nas versões recentes)
+
+Requisitos do programa:
+
+- Aviso inicial grande em maiúsculas: "APENAS PARA ESTUDOS E TESTES EM CONTA DEMO! TRADING ENVOLVE RISCO TOTAL DE PERDA DE CAPITAL. NÃO USE DINHEIRO REAL SEM TESTAR MUITO!"
+
+- Peça email e senha com getpass (import getpass) para não mostrar na tela.
+
+- Conecte PRIMEIRO na conta PRACTICE (demo): Iq.change_balance("PRACTICE")
+
+- Mostre status da conexão e reconecte automaticamente se cair.
+
+- Busque lista de ativos abertos com Iq.get_all_open_time() ou similar, filtre só os que estão abertos para binary/digital.
+
+- Implemente análise em tempo real com pandas + pandas_ta (instale: !pip install pandas pandas_ta numpy)
+
+- Estratégias probabilísticas mínimas:
+  1. RSI (período 14): Call se <30, Put se >70 + confirmação de tendência
+  2. Cruzamento SMA (ex: SMA9 cruza SMA21 para cima → Call)
+  3. Estratégia combinada (RSI + MA + candle direction)
+
+- Para cada estratégia, calcule taxa histórica simples de acerto nos últimos 60–120 candles (probabilidade %).
+
+- Menu interativo no console:
+  1. Listar e escolher ativo (ex: EURUSD-OTC, BTCUSD...)
+  2. Escolher estratégia (1=RSI, 2=MA, 3=Combinada, 4=Todas)
+  3. Tempo de expiração (1 min, 5 min)
+  4. Iniciar scan em tempo real
+  5. Ver estatísticas de trades passados
+  0. Sair
+
+- No modo real-time: a cada ~60s (sincronize com fechamento de candle), analise os ativos selecionados (ou top 5 com maior probabilidade), gere sinal só se confiança >65% (CALL ou PUT + % + ativo + hora).
+
+- Registre todos sinais em uma lista e verifique resultado após expiração usando Iq.check_win_v4() ou get_option_info_async se disponível.
+
+- Mostre feedback ao vivo:
+  - Win rate geral (% vitórias)
+  - Últimos 20 trades (V/D)
+  - Ranking de ativos mais lucrativos
+  - Streak atual de vitórias
+
+- Use loop com time.sleep(1) + checagem de novo candle para rodar continuamente.
+
+- Tratamento de erros robusto (reconexão, timeout websocket).
+
+- Código bem comentado em português, organizado em funções.
+
+Gere o código completo pronto para rodar no Replit. Se precisar instalar libs extras, inclua os !pip no topo. Teste em DEMO sempre!
