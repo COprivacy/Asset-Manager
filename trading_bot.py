@@ -9,6 +9,10 @@ import threading
 import csv
 from datetime import datetime
 import os
+import logging
+
+# Desativar logs excessivos da biblioteca
+logging.getLogger('iqoptionapi').setLevel(logging.CRITICAL)
 
 # Try to import pandas_ta
 try:
@@ -44,26 +48,41 @@ class TradingBot:
     def __init__(self):
         self.iq = None
         self.assets = ["EURUSD-OTC", "EURUSD", "GBPUSD-OTC", "GBPUSD"]
-        self.use_otc = True
         self.timeframe = 60 # Default M1
         self.min_confidence = 70
-        self.stats = {"wins": 0, "losses": 0, "streak": 0, "history": [], "ranking": {}}
+        self.balance_type = "PRACTICE" # Default
+        self.trade_amount = 1.0 # Valor da entrada
+        self.stats = {"wins": 0, "losses": 0, "streak": 0}
         
         if not os.path.exists(CSV_FILE):
             with open(CSV_FILE, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Timestamp', 'Ativo', 'Tipo', 'Ação', 'Estratégia', 'Confiança', 'Probabilidade', 'Preço'])
+                writer.writerow(['Timestamp', 'Ativo', 'Tipo', 'Ação', 'Estratégia', 'Confiança', 'Probabilidade', 'Preço', 'Resultado'])
 
     def connect(self):
         email = input("Email IQ Option: ")
         password = getpass.getpass("Senha IQ Option: ")
+        
+        print("\nEscolha o tipo de conta:")
+        print("1. PRACTICE (Demo)")
+        print("2. REAL")
+        acc_type = input("Opção (1 ou 2): ")
+        self.balance_type = "REAL" if acc_type == "2" else "PRACTICE"
+        
+        if self.balance_type == "REAL":
+            confirm = input("!!! VOCÊ SELECIONOU CONTA REAL. TEM CERTEZA? (S/N): ").upper()
+            if confirm != "S":
+                self.balance_type = "PRACTICE"
+                print("Alterado para PRACTICE por segurança.")
+
         self.iq = IQ_Option(email, password)
         check, reason = self.iq.connect()
         if not check:
             print(f"Erro: {reason}")
             return False
-        self.iq.change_balance("PRACTICE")
-        print(f"Conectado! Saldo Demo: {self.iq.get_balance()}")
+            
+        self.iq.change_balance(self.balance_type)
+        print(f"Conectado! Modo: {self.balance_type} | Saldo: {self.iq.get_balance()}")
         return True
 
     def get_market_volatility(self, df):
@@ -99,30 +118,29 @@ class TradingBot:
             return "PUT", "Torres Gêmeas"
         return None, None
 
-    def analyze_price_action(self, df):
-        curr = df.iloc[-1]
-        prev = df.iloc[-2]
-        if prev['close'] < prev['open'] and curr['close'] > curr['open'] and \
-           curr['close'] > prev['open'] and curr['open'] < prev['close']:
-            return "CALL", "Engulfing de Alta"
-        if prev['close'] > prev['open'] and curr['close'] < curr['open'] and \
-           curr['close'] < prev['open'] and curr['open'] > prev['close']:
-            return "PUT", "Engulfing de Baixa"
-        return None, None
+    def execute_trade(self, asset, action):
+        print(f">>> EXECUTANDO ORDEM: {asset} | {action} | Valor: {self.trade_amount}")
+        action = action.lower()
+        # Tempo de expiração: 1 minuto
+        check, id = self.iq.buy(self.trade_amount, asset, action, 1)
+        if check:
+            print(f"Ordem aberta com sucesso! ID: {id}")
+            # Thread para verificar resultado após 1 min
+            threading.Thread(target=self.verify_result, args=(id, asset, action)).start()
+        else:
+            print(f"Erro ao abrir ordem: {id}")
+
+    def verify_result(self, trade_id, asset, action):
+        time.sleep(65) # Espera o tempo da vela + margem
+        check, win = self.iq.check_win_v4(trade_id)
+        result = "WIN" if win > 0 else "LOSS" if win < 0 else "EMPATE"
+        print(f"--- RESULTADO {asset}: {result} ({win}) ---")
+        if win > 0: self.stats["wins"] += 1
+        elif win < 0: self.stats["losses"] += 1
 
     def run_analysis(self, asset):
         try:
-            # Check if asset is open before attempting to get candles
-            all_info = self.iq.get_all_open_time()
-            is_open = False
-            for t in ['turbo', 'binary']:
-                if t in all_info and asset in all_info[t] and all_info[t][asset]['open']:
-                    is_open = True
-                    break
-            
-            if not is_open:
-                return
-
+            # Pegar candles sem disparar o erro de thread (get_all_open_time simplificado)
             candles = self.iq.get_candles(asset, self.timeframe, 100, time.time())
             if not candles or len(candles) < 5: 
                 return
@@ -134,32 +152,25 @@ class TradingBot:
             volatility = self.get_market_volatility(df)
             signals_found = []
 
-            # MHI
+            # Estratégias
             action, strat = self.analyze_mhi(df)
             prob = self.backtest_strategy(df, "mhi")
             signals_found.append({"action": action, "strat": strat, "prob": prob})
 
-            # Padrão 23
             action, strat = self.analyze_padrao23(df)
             prob = self.backtest_strategy(df, "p23")
             signals_found.append({"action": action, "strat": strat, "prob": prob})
 
-            # Torres Gêmeas
             action, strat = self.analyze_torres_gemeas(df)
             if action:
                 prob = self.backtest_strategy(df, "torres")
-                signals_found.append({"action": action, "strat": strat, "prob": prob})
-
-            # Price Action
-            action, strat = self.analyze_price_action(df)
-            if action:
-                prob = self.backtest_strategy(df, "pa")
                 signals_found.append({"action": action, "strat": strat, "prob": prob})
 
             if signals_found:
                 best = max(signals_found, key=lambda x: x['prob'])
                 if best['prob'] >= self.min_confidence:
                     self.process_signal(asset, best, volatility, "OTC" if "OTC" in asset else "Normal")
+                    self.execute_trade(asset, best['action'])
 
         except Exception as e:
             pass
@@ -170,7 +181,7 @@ class TradingBot:
         
         with open(CSV_FILE, 'a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([timestamp, asset, asset_type, signal_info['action'], signal_info['strat'], 100, signal_info['prob'], "0"])
+            writer.writerow([timestamp, asset, asset_type, signal_info['action'], signal_info['strat'], 100, signal_info['prob'], "0", "PENDENTE"])
 
         data = {
             "asset": asset,
@@ -187,8 +198,8 @@ class TradingBot:
             pass
 
     def start_scan(self):
-        print(f"\nScan iniciado para: {', '.join(self.assets)}")
-        print(f"Timeframe: {self.timeframe}s. Pressione Ctrl+C para voltar ao menu.")
+        print(f"\nScan e Operação Automática iniciados para: {', '.join(self.assets)}")
+        print(f"Modo: {self.balance_type} | Timeframe: {self.timeframe}s. Ctrl+C para parar.")
         while True:
             for asset in self.assets:
                 self.run_analysis(asset)
@@ -197,17 +208,19 @@ class TradingBot:
     def menu(self):
         while True:
             print("\n--- MENU INTERATIVO ---")
-            print(f"Ativos Atuais: {', '.join(self.assets)}")
-            print("1. Iniciar Scan Real-time")
-            print("2. Escolher Timeframe (M1/M5)")
+            print(f"Modo: {self.balance_type} | Ativos: {', '.join(self.assets)}")
+            print("1. Iniciar Scan e Operação Automática")
+            print("2. Mudar Valor da Entrada (Atual: {self.trade_amount})")
+            print("3. Ver Estatísticas (Wins: {self.stats['wins']} | Losses: {self.stats['losses']})")
             print("0. Sair")
             
             op = input("Opção: ")
             if op == "1":
                 self.start_scan()
             elif op == "2":
-                tf = input("Timeframe (1 ou 5): ")
-                self.timeframe = 60 if tf == "1" else 300
+                self.trade_amount = float(input("Novo valor: "))
+            elif op == "3":
+                print(f"\nStats: Wins {self.stats['wins']} | Losses {self.stats['losses']}")
             elif op == "0":
                 break
 

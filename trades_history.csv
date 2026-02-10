@@ -18,3 +18,6 @@ Timestamp,Ativo,Tipo,Ação,Estratégia,Confiança,Probabilidade,Preço
 17:11:02,EURJPY-OTC,OTC,CALL,MHI (Maioria Vermelha),100,81,0
 17:12:02,EURJPY-OTC,OTC,CALL,Padrão 23,100,76,0
 17:13:02,EURJPY-OTC,OTC,PUT,MHI (Maioria Verde),100,84,0
+22:32:11,EURUSD-OTC,OTC,CALL,MHI (Maioria Vermelha),100,76,0
+22:32:15,GBPUSD-OTC,OTC,PUT,MHI (Maioria Verde),100,80,0
+22:33:20,EURUSD-OTC,OTC,CALL,Torres Gêmeas,100,77,0
