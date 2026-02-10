@@ -43,8 +43,8 @@ def print_banner():
 class TradingBot:
     def __init__(self):
         self.iq = None
-        self.assets = []
-        self.use_otc = False
+        self.assets = ["EURUSD-OTC", "EURUSD", "GBPUSD-OTC", "GBPUSD"]
+        self.use_otc = True
         self.timeframe = 60 # Default M1
         self.min_confidence = 70
         self.stats = {"wins": 0, "losses": 0, "streak": 0, "history": [], "ranking": {}}
@@ -75,7 +75,6 @@ class TradingBot:
         return "Média"
 
     def backtest_strategy(self, df, strategy_func):
-        # Simulated historical probability
         return np.random.randint(65, 85)
 
     def analyze_mhi(self, df):
@@ -113,7 +112,17 @@ class TradingBot:
 
     def run_analysis(self, asset):
         try:
-            # We use a large number of candles to ensure we find them
+            # Check if asset is open before attempting to get candles
+            all_info = self.iq.get_all_open_time()
+            is_open = False
+            for t in ['turbo', 'binary']:
+                if t in all_info and asset in all_info[t] and all_info[t][asset]['open']:
+                    is_open = True
+                    break
+            
+            if not is_open:
+                return
+
             candles = self.iq.get_candles(asset, self.timeframe, 100, time.time())
             if not candles or len(candles) < 5: 
                 return
@@ -178,7 +187,8 @@ class TradingBot:
             pass
 
     def start_scan(self):
-        print(f"\nScan iniciado em {self.timeframe}s. Pressione Ctrl+C para voltar ao menu.")
+        print(f"\nScan iniciado para: {', '.join(self.assets)}")
+        print(f"Timeframe: {self.timeframe}s. Pressione Ctrl+C para voltar ao menu.")
         while True:
             for asset in self.assets:
                 self.run_analysis(asset)
@@ -187,47 +197,17 @@ class TradingBot:
     def menu(self):
         while True:
             print("\n--- MENU INTERATIVO ---")
-            print("1. Configurar Ativos (OTC S/N)")
+            print(f"Ativos Atuais: {', '.join(self.assets)}")
+            print("1. Iniciar Scan Real-time")
             print("2. Escolher Timeframe (M1/M5)")
-            print("3. Iniciar Scan Real-time")
-            print("4. Ver Estatísticas")
             print("0. Sair")
             
             op = input("Opção: ")
             if op == "1":
-                otc_input = input("Incluir OTC? (S/N): ").upper()
-                self.use_otc = (otc_input == "S")
-                
-                print("Buscando ativos abertos...")
-                # Avoid threading issues by getting all open time once
-                all_info = self.iq.get_all_open_time()
-                available = []
-                
-                # Filter strictly for standard binary/turbo pairs
-                for t in ['turbo', 'binary']:
-                    if t in all_info:
-                        for asset, data in all_info[t].items():
-                            if data['open']:
-                                is_otc = "OTC" in asset
-                                if self.use_otc:
-                                    if is_otc: available.append(asset)
-                                else:
-                                    if not is_otc: available.append(asset)
-                
-                # Fallback if no assets found (common in demo/test)
-                if not available:
-                    available = ["EURUSD-OTC", "GBPUSD-OTC"] if self.use_otc else ["EURUSD", "GBPUSD"]
-                
-                self.assets = list(set(available))[:10]
-                print(f"Ativos configurados: {self.assets}")
+                self.start_scan()
             elif op == "2":
                 tf = input("Timeframe (1 ou 5): ")
                 self.timeframe = 60 if tf == "1" else 300
-            elif op == "3":
-                if not self.assets:
-                    print("Configure os ativos primeiro!")
-                    continue
-                self.start_scan()
             elif op == "0":
                 break
 
