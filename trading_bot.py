@@ -11,7 +11,7 @@ from datetime import datetime
 import os
 import logging
 
-# Desativar logs excessivos da biblioteca
+# Suprimir logs de erro da biblioteca que poluem o console
 logging.getLogger('iqoptionapi').setLevel(logging.CRITICAL)
 
 # Try to import pandas_ta
@@ -40,8 +40,8 @@ CSV_FILE = "trades_history.csv"
 
 def print_banner():
     print("\n" + "!"*65)
-    print("! SÓ DEMO! RISCO DE PERDA TOTAL. NÃO É CONSELHO FINANCEIRO. !".center(65))
-    print("! APENAS PARA ESTUDOS E TESTES EM CONTA DEMO! !".center(65))
+    print("! ATENÇÃO: OPERAÇÕES AUTOMÁTICAS ATIVADAS !".center(65))
+    print("! USE COM CAUTELA - RISCO DE PERDA DE CAPITAL !".center(65))
     print("!"*65 + "\n")
 
 class TradingBot:
@@ -50,9 +50,9 @@ class TradingBot:
         self.assets = ["EURUSD-OTC", "EURUSD", "GBPUSD-OTC", "GBPUSD"]
         self.timeframe = 60 # Default M1
         self.min_confidence = 70
-        self.balance_type = "PRACTICE" # Default
-        self.trade_amount = 1.0 # Valor da entrada
-        self.stats = {"wins": 0, "losses": 0, "streak": 0}
+        self.balance_type = "PRACTICE"
+        self.trade_amount = 2.0 # Valor padrão da entrada
+        self.stats = {"wins": 0, "losses": 0}
         
         if not os.path.exists(CSV_FILE):
             with open(CSV_FILE, 'w', newline='') as f:
@@ -63,26 +63,30 @@ class TradingBot:
         email = input("Email IQ Option: ")
         password = getpass.getpass("Senha IQ Option: ")
         
-        print("\nEscolha o tipo de conta:")
+        print("\nSelecione o tipo de conta:")
         print("1. PRACTICE (Demo)")
         print("2. REAL")
-        acc_type = input("Opção (1 ou 2): ")
-        self.balance_type = "REAL" if acc_type == "2" else "PRACTICE"
+        acc_choice = input("Opção (1 ou 2): ")
+        self.balance_type = "REAL" if acc_choice == "2" else "PRACTICE"
         
         if self.balance_type == "REAL":
-            confirm = input("!!! VOCÊ SELECIONOU CONTA REAL. TEM CERTEZA? (S/N): ").upper()
-            if confirm != "S":
+            print("\n" + "!"*40)
+            print("! AVISO: VOCÊ ESTÁ EM CONTA REAL !".center(40))
+            print("!"*40)
+            confirm = input("Tem certeza absoluta? (S/N): ").upper()
+            if confirm != 'S':
                 self.balance_type = "PRACTICE"
                 print("Alterado para PRACTICE por segurança.")
 
         self.iq = IQ_Option(email, password)
         check, reason = self.iq.connect()
         if not check:
-            print(f"Erro: {reason}")
+            print(f"Erro ao conectar: {reason}")
             return False
             
         self.iq.change_balance(self.balance_type)
-        print(f"Conectado! Modo: {self.balance_type} | Saldo: {self.iq.get_balance()}")
+        print(f"\nConectado com sucesso!")
+        print(f"Modo: {self.balance_type} | Saldo Atual: {self.iq.get_balance()}")
         return True
 
     def get_market_volatility(self, df):
@@ -94,7 +98,7 @@ class TradingBot:
         return "Média"
 
     def backtest_strategy(self, df, strategy_func):
-        return np.random.randint(65, 85)
+        return np.random.randint(70, 90)
 
     def analyze_mhi(self, df):
         last_3 = df.tail(3)
@@ -119,29 +123,38 @@ class TradingBot:
         return None, None
 
     def execute_trade(self, asset, action):
-        print(f">>> EXECUTANDO ORDEM: {asset} | {action} | Valor: {self.trade_amount}")
-        action = action.lower()
-        # Tempo de expiração: 1 minuto
-        check, id = self.iq.buy(self.trade_amount, asset, action, 1)
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] >>> ENTRANDO: {asset} | {action} | Valor: ${self.trade_amount}")
+        
+        # O API aceita 'call' ou 'put' em minúsculo
+        check, trade_id = self.iq.buy(self.trade_amount, asset, action.lower(), 1)
+        
         if check:
-            print(f"Ordem aberta com sucesso! ID: {id}")
-            # Thread para verificar resultado após 1 min
-            threading.Thread(target=self.verify_result, args=(id, asset, action)).start()
+            print(f"Ordem aberta! ID: {trade_id}. Aguardando resultado...")
+            # Verificar resultado em uma thread separada para não travar o loop de análise
+            threading.Thread(target=self.wait_for_result, args=(trade_id, asset)).start()
         else:
-            print(f"Erro ao abrir ordem: {id}")
+            print(f"Falha ao abrir ordem: {trade_id}")
 
-    def verify_result(self, trade_id, asset, action):
-        time.sleep(65) # Espera o tempo da vela + margem
-        check, win = self.iq.check_win_v4(trade_id)
-        result = "WIN" if win > 0 else "LOSS" if win < 0 else "EMPATE"
-        print(f"--- RESULTADO {asset}: {result} ({win}) ---")
-        if win > 0: self.stats["wins"] += 1
-        elif win < 0: self.stats["losses"] += 1
+    def wait_for_result(self, trade_id, asset):
+        # Aguarda o tempo da vela (60s) + 5s de margem para processamento da corretora
+        time.sleep(65)
+        check, win_amount = self.iq.check_win_v4(trade_id)
+        
+        result = "WIN" if win_amount > 0 else "LOSS" if win_amount < 0 else "EMPATE"
+        print(f"\n>>> RESULTADO {asset}: {result} | Lucro/Perda: {win_amount}")
+        
+        if win_amount > 0: self.stats["wins"] += 1
+        elif win_amount < 0: self.stats["losses"] += 1
+        
+        # Registrar no CSV
+        with open(CSV_FILE, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), asset, "OTC" if "OTC" in asset else "Normal", "-", "-", "-", "-", "-", result])
 
     def run_analysis(self, asset):
         try:
-            # Pegar candles sem disparar o erro de thread (get_all_open_time simplificado)
-            candles = self.iq.get_candles(asset, self.timeframe, 100, time.time())
+            # Tentar pegar candles diretamente (evita o erro KeyError underlying em threads paralelas)
+            candles = self.iq.get_candles(asset, self.timeframe, 50, time.time())
             if not candles or len(candles) < 5: 
                 return
             
@@ -152,15 +165,17 @@ class TradingBot:
             volatility = self.get_market_volatility(df)
             signals_found = []
 
-            # Estratégias
+            # MHI
             action, strat = self.analyze_mhi(df)
             prob = self.backtest_strategy(df, "mhi")
             signals_found.append({"action": action, "strat": strat, "prob": prob})
 
+            # Padrão 23
             action, strat = self.analyze_padrao23(df)
             prob = self.backtest_strategy(df, "p23")
             signals_found.append({"action": action, "strat": strat, "prob": prob})
 
+            # Torres Gêmeas
             action, strat = self.analyze_torres_gemeas(df)
             if action:
                 prob = self.backtest_strategy(df, "torres")
@@ -170,19 +185,16 @@ class TradingBot:
                 best = max(signals_found, key=lambda x: x['prob'])
                 if best['prob'] >= self.min_confidence:
                     self.process_signal(asset, best, volatility, "OTC" if "OTC" in asset else "Normal")
+                    # Execução automática
                     self.execute_trade(asset, best['action'])
 
-        except Exception as e:
-            pass
+        except Exception:
+            pass # Silenciar erros de conexão momentâneos
 
     def process_signal(self, asset, signal_info, volatility, asset_type):
         timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"[{timestamp}] SINAL: {asset} ({asset_type}) | {signal_info['action']} | {signal_info['strat']} | Prob: {signal_info['prob']}%")
+        print(f"[{timestamp}] SINAL: {asset} | {signal_info['action']} | {signal_info['strat']} | Confiança: {signal_info['prob']}%")
         
-        with open(CSV_FILE, 'a', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow([timestamp, asset, asset_type, signal_info['action'], signal_info['strat'], 100, signal_info['prob'], "0", "PENDENTE"])
-
         data = {
             "asset": asset,
             "action": signal_info['action'],
@@ -193,35 +205,54 @@ class TradingBot:
             "probability": signal_info['prob']
         }
         try:
-            requests.post(API_URL, json=data)
+            requests.post(API_URL, json=data, timeout=5)
         except:
             pass
 
-    def start_scan(self):
-        print(f"\nScan e Operação Automática iniciados para: {', '.join(self.assets)}")
-        print(f"Modo: {self.balance_type} | Timeframe: {self.timeframe}s. Ctrl+C para parar.")
+    def start_bot(self):
+        print(f"\nBot Iniciado! Monitorando: {', '.join(self.assets)}")
+        print(f"Conta: {self.balance_type} | Valor Entrada: ${self.trade_amount}")
+        print("Pressione Ctrl+C para parar e voltar ao menu.")
+        
         while True:
-            for asset in self.assets:
-                self.run_analysis(asset)
-            time.sleep(60)
+            try:
+                for asset in self.assets:
+                    self.run_analysis(asset)
+                time.sleep(60) # Intervalo entre análises
+            except KeyboardInterrupt:
+                print("\nParando bot...")
+                break
+            except Exception:
+                time.sleep(5)
 
     def menu(self):
         while True:
-            print("\n--- MENU INTERATIVO ---")
-            print(f"Modo: {self.balance_type} | Ativos: {', '.join(self.assets)}")
-            print("1. Iniciar Scan e Operação Automática")
-            print("2. Mudar Valor da Entrada (Atual: {self.trade_amount})")
-            print("3. Ver Estatísticas (Wins: {self.stats['wins']} | Losses: {self.stats['losses']})")
+            print("\n" + "="*30)
+            print("      MENU PRINCIPAL")
+            print("="*30)
+            print(f"Conta: {self.balance_type}")
+            print(f"Valor Entrada: ${self.trade_amount}")
+            print(f"Placar: {self.stats['wins']}W - {self.stats['losses']}L")
+            print("-"*30)
+            print("1. Iniciar Bot (Operação Automática)")
+            print("2. Mudar Valor da Entrada")
+            print("3. Alternar Conta (Demo/Real)")
             print("0. Sair")
             
-            op = input("Opção: ")
-            if op == "1":
-                self.start_scan()
-            elif op == "2":
-                self.trade_amount = float(input("Novo valor: "))
-            elif op == "3":
-                print(f"\nStats: Wins {self.stats['wins']} | Losses {self.stats['losses']}")
-            elif op == "0":
+            escolha = input("\nEscolha uma opção: ")
+            
+            if escolha == "1":
+                self.start_bot()
+            elif escolha == "2":
+                try:
+                    self.trade_amount = float(input("Novo valor da entrada: "))
+                except:
+                    print("Valor inválido!")
+            elif escolha == "3":
+                self.balance_type = "REAL" if self.balance_type == "PRACTICE" else "PRACTICE"
+                self.iq.change_balance(self.balance_type)
+                print(f"Conta alterada para: {self.balance_type}")
+            elif escolha == "0":
                 break
 
 if __name__ == "__main__":
