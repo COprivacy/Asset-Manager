@@ -87,10 +87,11 @@ class TradingBot:
 
     def get_precision_time(self):
         try:
-            # IQ Option API stable_api has get_server_timestamp() or similar
-            # If get_server_time is not available, we use time.time() as fallback
-            if hasattr(self.iq, 'get_server_timestamp'):
-                return self.iq.get_server_timestamp()
+            if self.iq:
+                # Some versions use get_server_timestamp, others get_server_time
+                for method in ['get_server_timestamp', 'get_server_time']:
+                    if hasattr(self.iq, method):
+                        return getattr(self.iq, method)()
             return int(time.time())
         except:
             return int(time.time())
@@ -128,36 +129,41 @@ class TradingBot:
 
     def execute_trade_pro(self, asset, action, strategy, amount, is_mg=False):
         post_log(f"Iniciando ordem: {asset} | {action} | ${amount} ({strategy})")
-        # Check if iq is not None before calling buy
         if self.iq:
-            check, trade_id = self.iq.buy(amount, asset, action.lower(), 1)
-            if check:
-                post_log(f"Ordem aceita pela corretora. ID: {trade_id}")
-                threading.Thread(target=self.manage_trade, args=(trade_id, asset, action, strategy, amount, is_mg)).start()
-            else:
-                post_log(f"Erro ao enviar ordem: {trade_id}")
+            try:
+                check, trade_id = self.iq.buy(amount, asset, action.lower(), 1)
+                if check:
+                    post_log(f"Ordem aceita pela corretora. ID: {trade_id}")
+                    threading.Thread(target=self.manage_trade, args=(trade_id, asset, action, strategy, amount, is_mg)).start()
+                else:
+                    post_log(f"Erro ao enviar ordem: {trade_id}")
+            except Exception as e:
+                post_log(f"Erro na execução do trade: {str(e)}")
 
     def manage_trade(self, trade_id, asset, action, strategy, amount, is_mg):
         time.sleep(65)
         if self.iq:
-            check, win_amount = self.iq.check_win_v4(trade_id)
-            
-            if win_amount > 0:
-                post_log(f"WIN em {asset}! Lucro: ${win_amount}")
-                self.stats["wins"] += 1
-                self.strategy_performance[strategy]["wins"] += 1
-                self.save_result(asset, action, strategy, "WIN", win_amount)
-            elif win_amount < 0:
-                post_log(f"LOSS em {asset}! Perda: ${amount}")
-                if self.martingale > 0 and not is_mg:
-                    post_log(f"Aplicando Martingale nível 1 em {asset}...")
-                    self.execute_trade_pro(asset, action, strategy, amount * 2.2, is_mg=True)
+            try:
+                check, win_amount = self.iq.check_win_v4(trade_id)
+                
+                if win_amount > 0:
+                    post_log(f"WIN em {asset}! Lucro: ${win_amount}")
+                    self.stats["wins"] += 1
+                    self.strategy_performance[strategy]["wins"] += 1
+                    self.save_result(asset, action, strategy, "WIN", win_amount)
+                elif win_amount < 0:
+                    post_log(f"LOSS em {asset}! Perda: ${amount}")
+                    if self.martingale > 0 and not is_mg:
+                        post_log(f"Aplicando Martingale nível 1 em {asset}...")
+                        self.execute_trade_pro(asset, action, strategy, amount * 2.2, is_mg=True)
+                    else:
+                        self.stats["losses"] += 1
+                        self.strategy_performance[strategy]["losses"] += 1
+                        self.save_result(asset, action, strategy, "LOSS", -amount)
                 else:
-                    self.stats["losses"] += 1
-                    self.strategy_performance[strategy]["losses"] += 1
-                    self.save_result(asset, action, strategy, "LOSS", -amount)
-            else:
-                post_log(f"EMPATE em {asset}.")
+                    post_log(f"EMPATE em {asset}.")
+            except Exception as e:
+                post_log(f"Erro ao gerenciar trade: {str(e)}")
 
     def save_result(self, asset, action, strategy, result, profit):
         with open(CSV_FILE, 'a', newline='') as f:
@@ -177,35 +183,37 @@ class TradingBot:
         
         while self.running:
             try:
-                # Sincronização com servidor
                 server_time = self.get_precision_time()
                 now = datetime.fromtimestamp(server_time)
                 
-                # Log a cada 10 segundos para mostrar que está vivo
                 if now.second % 10 == 0:
                     print(f"Aguardando ciclo... {now.strftime('%H:%M:%S')}", end='\r')
                 
-                # Análise precisa nos 58 segundos
                 if now.second == 58:
                     post_log(f"Iniciando ciclo de análise para quadrante das {now.strftime('%H:%M')}")
                     for asset in self.assets:
                         if self.iq:
-                            candles = self.iq.get_candles(asset, 60, 10, server_time)
-                            if not candles or len(candles) < 3:
-                                post_log(f"Aviso: {asset} não retornou candles suficientes.")
-                                continue
+                            try:
+                                candles = self.iq.get_candles(asset, 60, 10, server_time)
+                                if not candles or len(candles) < 3:
+                                    post_log(f"Aviso: {asset} não retornou candles suficientes.")
+                                    continue
+                                    
+                                df = pd.DataFrame(candles)
+                                df['close'] = df['close'].astype(float)
+                                df['open'] = df['open'].astype(float)
                                 
-                            df = pd.DataFrame(candles)
-                            df['close'] = df['close'].astype(float)
-                            df['open'] = df['open'].astype(float)
-                            
-                            strategies = self.analyze_strategies(asset, df)
-                            best = max(strategies, key=lambda x: x['conf'])
-                            
-                            if best['conf'] >= self.min_confidence:
-                                self.execute_trade_pro(asset, best['action'], best['name'], self.trade_amount)
-                            else:
-                                post_log(f"Sinal fraco em {asset}: {best['name']} com {best['conf']}% de confiança.")
+                                strategies = self.analyze_strategies(asset, df)
+                                if not strategies: continue
+                                
+                                best = max(strategies, key=lambda x: x['conf'])
+                                
+                                if best['conf'] >= self.min_confidence:
+                                    self.execute_trade_pro(asset, best['action'], best['name'], self.trade_amount)
+                                else:
+                                    post_log(f"Sinal fraco em {asset}: {best['name']} com {best['conf']}% de confiança.")
+                            except Exception as e:
+                                post_log(f"Erro ao analisar {asset}: {str(e)}")
                     
                     time.sleep(2)
                 time.sleep(0.5)
@@ -226,7 +234,11 @@ class TradingBot:
             
             c = input("\n> ")
             if c == "1": self.start_engine()
-            elif c == "2": self.trade_amount = float(input("Novo valor: "))
+            elif c == "2":
+                try:
+                    self.trade_amount = float(input("Novo valor: "))
+                except:
+                    print("Valor inválido!")
             elif c == "3":
                 print("\nRanking de Assertividade (Sessão Atual):")
                 for s, p in self.strategy_performance.items():
