@@ -1,19 +1,25 @@
-import { pgTable, text, serial, integer, boolean, timestamp, decimal } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 export const signals = pgTable("signals", {
   id: serial("id").primaryKey(),
   asset: text("asset").notNull(),
-  action: text("action").notNull(), // CALL or PUT
-  strategy: text("strategy").notNull(), // RSI, SMA, MHI, Twin Towers, etc.
+  action: text("action").notNull(),
+  strategy: text("strategy").notNull(),
   confidence: integer("confidence").notNull(),
   timestamp: timestamp("timestamp").defaultNow(),
-  result: text("result"), // WIN, LOSS, or PENDING
-  price: text("price"), // Entry price
-  assetType: text("asset_type").notNull().default("Normal"), // Normal or OTC
-  volatility: text("volatility").notNull().default("Média"), // Baixa, Média, Alta
-  probability: integer("probability"), // Historical probability %
+  result: text("result"),
+  price: text("price"),
+  assetType: text("asset_type").notNull().default("Normal"),
+  volatility: text("volatility").notNull().default("Média"),
+  probability: integer("probability"),
+});
+
+export const botLogs = pgTable("bot_logs", {
+  id: serial("id").primaryKey(),
+  message: text("message").notNull(),
+  timestamp: timestamp("timestamp").defaultNow(),
 });
 
 export const insertSignalSchema = createInsertSchema(signals).omit({ 
@@ -21,5 +27,12 @@ export const insertSignalSchema = createInsertSchema(signals).omit({
   timestamp: true 
 });
 
+export const insertBotLogSchema = createInsertSchema(botLogs).omit({
+  id: true,
+  timestamp: true
+});
+
 export type Signal = typeof signals.$inferSelect;
 export type InsertSignal = z.infer<typeof insertSignalSchema>;
+export type BotLog = typeof botLogs.$inferSelect;
+export type InsertBotLog = z.infer<typeof insertBotLogSchema>;

@@ -16,7 +16,6 @@ export async function registerRoutes(
 
   app.post(api.signals.create.path, async (req, res) => {
     try {
-      // Use z.coerce for any numeric fields that might come as strings
       const input = api.signals.create.input.extend({
         confidence: z.coerce.number(),
         probability: z.coerce.number().optional(),
@@ -38,6 +37,17 @@ export async function registerRoutes(
   app.delete(api.signals.clear.path, async (req, res) => {
     await storage.clearSignals();
     res.status(204).send();
+  });
+
+  app.get(api.logs.list.path, async (req, res) => {
+    const logs = await storage.getLogs();
+    res.json(logs);
+  });
+
+  app.post(api.logs.create.path, async (req, res) => {
+    const input = api.logs.create.input.parse(req.body);
+    const log = await storage.createLog(input);
+    res.status(201).json(log);
   });
 
   return httpServer;

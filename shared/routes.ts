@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertSignalSchema, signals } from './schema';
+import { insertSignalSchema, signals, botLogs, insertBotLogSchema } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -40,6 +40,23 @@ export const api = {
       },
     },
   },
+  logs: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/logs' as const,
+      responses: {
+        200: z.array(z.custom<typeof botLogs.$inferSelect>()),
+      },
+    },
+    create: {
+      method: 'POST' as const,
+      path: '/api/logs' as const,
+      input: insertBotLogSchema,
+      responses: {
+        201: z.custom<typeof botLogs.$inferSelect>(),
+      },
+    },
+  }
 };
 
 export function buildUrl(path: string, params?: Record<string, string | number>): string {
