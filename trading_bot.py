@@ -71,6 +71,8 @@ class TradingBot:
             }
         }
         self.running = True
+        self.active_trades = {}  # {asset: end_time}
+        self.cooldowns = {}      # {asset: end_time}
 
         if not os.path.exists(CSV_FILE):
             with open(CSV_FILE, 'w', newline='') as f:
@@ -166,6 +168,9 @@ class TradingBot:
         return strategies
 
     def execute_trade_pro(self, asset, action, strategy, amount, is_mg=False):
+        # Marcar ativo como ocupado
+        self.active_trades[asset] = True
+        
         post_log(
             f"Iniciando ordem: {asset} | {action} | ${amount} ({strategy})")
         if self.iq:
@@ -193,6 +198,10 @@ class TradingBot:
                     self.strategy_performance[strategy]["wins"] += 1
                     self.save_result(asset, action, strategy, "WIN",
                                      win_amount)
+                    # Adicionar cooldown de 2 minutos após vitória
+                    self.cooldowns[asset] = time.time() + 120
+                    if asset in self.active_trades:
+                        del self.active_trades[asset]
                 elif win_amount < 0:
                     post_log(f"LOSS em {asset}! Perda: ${amount}")
                     if self.martingale > 0 and not is_mg:
@@ -207,10 +216,16 @@ class TradingBot:
                         self.strategy_performance[strategy]["losses"] += 1
                         self.save_result(asset, action, strategy, "LOSS",
                                          -amount)
+                        if asset in self.active_trades:
+                            del self.active_trades[asset]
                 else:
                     post_log(f"EMPATE em {asset}.")
+                    if asset in self.active_trades:
+                        del self.active_trades[asset]
             except Exception as e:
                 post_log(f"Erro ao gerenciar trade: {str(e)}")
+                if asset in self.active_trades:
+                    del self.active_trades[asset]
 
     def save_result(self, asset, action, strategy, result, profit):
         with open(CSV_FILE, 'a', newline='') as f:
@@ -253,6 +268,19 @@ class TradingBot:
                         f"Iniciando ciclo de análise para quadrante das {now.strftime('%H:%M')}"
                     )
                     for asset in self.assets:
+                        # Verificar se o ativo está em operação ou em cooldown
+                        if asset in self.active_trades:
+                            continue
+                        
+                        if asset in self.cooldowns:
+                            if time.time() < self.cooldowns[asset]:
+                                remaining = int(self.cooldowns[asset] - time.time())
+                                if remaining % 30 == 0: # Logar a cada 30s de cooldown
+                                    post_log(f"{asset} em cooldown por mais {remaining}s.")
+                                continue
+                            else:
+                                del self.cooldowns[asset]
+
                         if self.iq:
                             try:
                                 candles = self.iq.get_candles(
