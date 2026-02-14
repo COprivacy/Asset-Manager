@@ -1,0 +1,47 @@
+Você é um especialista em Python para trading automatizado. Crie um script Python completo, modular e bem comentado para automação de trades na IQ Option, usando a biblioteca iqoptionapi (a versão mais estável e atualizada disponível em 2026, preferencialmente do repo Lu-Yi-Hsun/iqoptionapi ou iqoptionapi/iqoptionapi).
+
+Requisitos principais:
+- Use Python 3.10+ (compatível com Replit).
+- Instale automaticamente as dependências necessárias: pip install git+https://github.com/Lu-Yi-Hsun/iqoptionapi.git (ou a versão mais recente; se não funcionar, use iqoptionapi==6.8.9.1 ou fork community).
+- Suporte conta DEMO apenas (PRACTICE mode) – avise que real pode violar TOS e banir conta.
+- Ativo principal: "WIN$" (Mini Índice) ou "EURUSD" como fallback.
+- Timeframe: 60 segundos (1min) ou 300 segundos (5min) para candles.
+- Estratégia baseada em Smart Money Concepts (SMC): detecção de BOS (Break of Structure) e CHOCH (Change of Character) para reversões.
+  - Use lógica simples em Python (sem TA-Lib se possível, ou instale se fácil no Replit).
+  - Detecte pivots high/low com left/right strength = pivot_length (default 5, configurável).
+  - Mantenha últimos 6 swing highs/lows.
+  - Tendência: Up se last_high > prev_high AND last_low > prev_low; Down no oposto.
+  - BOS Bull: high > last_high em uptrend (continuação).
+  - BOS Bear: low < last_low em downtrend.
+  - CHOCH Bull: high > last_high em downtrend (reversão compra → CALL).
+  - CHOCH Bear: low < last_low em uptrend (reversão venda → PUT).
+  - Só entre em CHOCH (prioridade reversão), ignore BOS por enquanto.
+  - Confirmação: use close >/< nível se toggle ativado; adicione filtro volume simples (opcional).
+- Entradas automáticas:
+  - Quando CHOCH Bear detectado → buy PUT (venda), amount configurável (ex: $1-$10), expiração 1-5 min.
+  - Quando CHOCH Bull detectado → buy CALL (compra).
+  - Risco: máximo 1-2% do balance por trade (calcule dinamicamente).
+  - Meta R:R 1:4 ou 1:5 – simule filtrando setups com alta probabilidade (ex: só se distância para target anterior for 4x+ o risco estimado).
+  - Máximo 3-5 trades por hora para evitar overtrading.
+  - Delay randômico 2-10s entre checks para parecer manual.
+- Funcionalidades extras:
+  - Loop infinito com sleep(60) ou websocket para real-time.
+  - Log de trades: print + salve em CSV (timestamp, sinal, direction, amount, result, profit).
+  - Alertas simples no console (ou integre Telegram se fácil: use python-telegram-bot).
+  - Parâmetros configuráveis via variáveis no topo: email, password, ativo, pivot_length, amount, expiry_minutes, use_practice=True.
+  - Tratamento de erros: reconexão automática se disconnect, check balance antes de trade.
+  - Backtest básico opcional: rode em histórico de candles para simular.
+
+Estrutura do código:
+1. Imports e instalação (se necessário).
+2. Configurações (email, senha, etc.).
+3. Função connect_and_check().
+4. Função get_candles() usando api.get_candles().
+5. Função detect_choch(candles, pivot_length) → retorna dict {'type': 'bull'/'bear'/None, 'price': ...}.
+6. Função execute_trade(direction, amount, expiry).
+7. Main loop: fetch candles → detect → trade se sinal → log → sleep.
+
+Inclua comentários em português explicando cada parte importante.
+Adicione disclaimer no início: "Uso apenas educacional e em conta demo! Automação viola TOS da IQ Option em contas reais – risco de banimento e perda total de capital."
+
+Gere o código completo pronto para rodar no Replit (sem precisar de VPS por enquanto).

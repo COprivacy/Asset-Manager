@@ -10,6 +10,7 @@ import csv
 from datetime import datetime
 import os
 import logging
+from openai import OpenAI
 
 # Configuração de Logs
 logging.getLogger('iqoptionapi').setLevel(logging.CRITICAL)
@@ -19,13 +20,17 @@ API_URL = "http://localhost:5000/api/signals"
 LOG_URL = "http://localhost:5000/api/logs"
 CSV_FILE = "trades_history.csv"
 
+# Replit AI Client
+client = OpenAI(
+    base_url="https://api.replit.com/ai/v1",
+    api_key=os.environ.get("REPLIT_API_KEY") # This will be available if the integration is set up
+)
 
 def post_log(message):
     try:
         requests.post(LOG_URL, json={"message": message}, timeout=5)
     except:
         pass
-
 
 def print_banner():
     msg = "QUANTUM SIGNALS PRO - MONITORAMENTO ATIVO"
@@ -36,51 +41,32 @@ def print_banner():
     print("█" * 65 + "\n")
     post_log(msg)
 
-
 class TradingBot:
-
     def __init__(self):
         self.iq = None
         self.assets = ["GBPUSD-OTC", "EURUSD", "GBPUSD"]
         self.timeframe = 60  # M1
-        self.min_confidence = 70
+        self.min_confidence = 75 # Aumentado para maior assertividade com IA
         self.balance_type = "PRACTICE"
         self.trade_amount = 2.0
         self.martingale = 0
         self.stats = {"wins": 0, "losses": 0}
         self.strategy_performance = {
-            "MHI 1": {
-                "wins": 0,
-                "losses": 0
-            },
-            "MHI 2": {
-                "wins": 0,
-                "losses": 0
-            },
-            "MHI 3": {
-                "wins": 0,
-                "losses": 0
-            },
-            "Padrão 23": {
-                "wins": 0,
-                "losses": 0
-            },
-            "Torres Gêmeas": {
-                "wins": 0,
-                "losses": 0
-            }
+            "MHI 1": {"wins": 0, "losses": 0},
+            "MHI 2": {"wins": 0, "losses": 0},
+            "MHI 3": {"wins": 0, "losses": 0},
+            "Padrão 23": {"wins": 0, "losses": 0},
+            "Torres Gêmeas": {"wins": 0, "losses": 0},
+            "AI Opinion": {"wins": 0, "losses": 0}
         }
         self.running = True
-        self.active_trades = {}  # {asset: end_time}
-        self.cooldowns = {}      # {asset: end_time}
+        self.active_trades = {}
+        self.cooldowns = {}
 
         if not os.path.exists(CSV_FILE):
             with open(CSV_FILE, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow([
-                    'Timestamp', 'Ativo', 'Tipo', 'Ação', 'Estratégia',
-                    'Resultado', 'Lucro'
-                ])
+                writer.writerow(['Timestamp', 'Ativo', 'Tipo', 'Ação', 'Estratégia', 'Resultado', 'Lucro'])
 
     def connect(self):
         post_log("Iniciando processo de login...")
@@ -92,8 +78,7 @@ class TradingBot:
         self.balance_type = "REAL" if acc_choice == "2" else "PRACTICE"
 
         if self.balance_type == "REAL":
-            confirm = input(
-                "!!! CONTA REAL ATIVADA. CONFIRMAR? (S/N): ").upper()
+            confirm = input("!!! CONTA REAL ATIVADA. CONFIRMAR? (S/N): ").upper()
             if confirm != 'S': self.balance_type = "PRACTICE"
 
         from iqoptionapi.stable_api import IQ_Option
@@ -106,16 +91,13 @@ class TradingBot:
 
         self.iq.change_balance(self.balance_type)
         balance = self.iq.get_balance()
-        post_log(
-            f"Conectado com sucesso! Modo: {self.balance_type} | Saldo: {balance}"
-        )
+        post_log(f"Conectado com sucesso! Modo: {self.balance_type} | Saldo: {balance}")
         print(f"Conectado! Saldo: {balance}")
         return True
 
     def get_precision_time(self):
         try:
             if self.iq:
-                # Some versions use get_server_timestamp, others get_server_time
                 for method in ['get_server_timestamp', 'get_server_time']:
                     if hasattr(self.iq, method):
                         return getattr(self.iq, method)()
@@ -123,10 +105,28 @@ class TradingBot:
         except:
             return int(time.time())
 
+    def get_ai_opinion(self, asset, df):
+        try:
+            # Preparar dados simplificados para a IA
+            last_candles = df.tail(5).to_dict('records')
+            prompt = f"Analise estes últimos 5 candles de 1min para {asset}: {json.dumps(last_candles)}. Responda APENAS com um JSON contendo 'action' (CALL, PUT ou WAIT) e 'confidence' (0-100)."
+            
+            response = client.chat.completions.create(
+                model="gpt-4o", # Model available via Replit AI integration
+                messages=[{"role": "system", "content": "Você é um analista expert em Price Action."},
+                          {"role": "user", "content": prompt}]
+            )
+            
+            result = json.loads(response.choices[0].message.content)
+            post_log(f"IA Sugere: {result['action']} ({result['confidence']}%)")
+            return result
+        except Exception as e:
+            post_log(f"Erro na análise de IA: {str(e)}")
+            return {"action": "WAIT", "confidence": 0}
+
     def analyze_strategies(self, asset, df):
         last_3 = df.tail(3)
-        greens = sum(1 for _, row in last_3.iterrows()
-                     if row['close'] > row['open'])
+        greens = sum(1 for _, row in last_3.iterrows() if row['close'] > row['open'])
         reds = 3 - greens
 
         strategies = []
@@ -134,218 +134,105 @@ class TradingBot:
         action = "CALL" if greens < reds else "PUT"
         strategies.append({"name": "MHI 1", "action": action, "conf": 80})
 
-        # MHI 2
-        action = "CALL" if greens > reds else "PUT"
-        strategies.append({"name": "MHI 2", "action": action, "conf": 75})
+        # IA Opinion como reforço
+        ai_res = self.get_ai_opinion(asset, df)
+        if ai_res['action'] != "WAIT":
+            strategies.append({"name": "AI Opinion", "action": ai_res['action'], "conf": ai_res['confidence']})
 
-        # Torres Gêmeas
-        last_2 = df.tail(2)
-        if all(row['close'] > row['open'] for _, row in last_2.iterrows()):
-            strategies.append({
-                "name": "Torres Gêmeas",
-                "action": "CALL",
-                "conf": 70
-            })
-        elif all(row['close'] < row['open'] for _, row in last_2.iterrows()):
-            strategies.append({
-                "name": "Torres Gêmeas",
-                "action": "PUT",
-                "conf": 70
-            })
-
-        # Adicionar bônus de performance
+        # Bônus de performance
         for s in strategies:
-            perf = self.strategy_performance.get(s['name'], {
-                "wins": 0,
-                "losses": 0
-            })
+            perf = self.strategy_performance.get(s['name'], {"wins": 0, "losses": 0})
             total = perf['wins'] + perf['losses']
             if total > 0:
                 s['conf'] += (perf['wins'] / total) * 20
 
-        post_log(
-            f"Análise {asset}: {len(strategies)} estratégias verificadas.")
         return strategies
 
     def execute_trade_pro(self, asset, action, strategy, amount, is_mg=False):
-        # Marcar ativo como ocupado
         self.active_trades[asset] = True
-        
-        post_log(
-            f"Iniciando ordem: {asset} | {action} | ${amount} ({strategy})")
+        post_log(f"Iniciando ordem: {asset} | {action} | ${amount} ({strategy})")
         if self.iq:
             try:
                 check, trade_id = self.iq.buy(amount, asset, action.lower(), 1)
                 if check:
-                    post_log(f"Ordem aceita pela corretora. ID: {trade_id}")
-                    threading.Thread(target=self.manage_trade,
-                                     args=(trade_id, asset, action, strategy,
-                                           amount, is_mg)).start()
+                    threading.Thread(target=self.manage_trade, args=(trade_id, asset, action, strategy, amount, is_mg)).start()
                 else:
                     post_log(f"Erro ao enviar ordem: {trade_id}")
+                    if asset in self.active_trades: del self.active_trades[asset]
             except Exception as e:
                 post_log(f"Erro na execução do trade: {str(e)}")
+                if asset in self.active_trades: del self.active_trades[asset]
 
     def manage_trade(self, trade_id, asset, action, strategy, amount, is_mg):
         time.sleep(65)
         if self.iq:
             try:
                 check, win_amount = self.iq.check_win_v4(trade_id)
-
                 if win_amount > 0:
-                    post_log(f"WIN em {asset}! Lucro: ${win_amount}")
                     self.stats["wins"] += 1
                     self.strategy_performance[strategy]["wins"] += 1
-                    self.save_result(asset, action, strategy, "WIN",
-                                     win_amount)
-                    # Adicionar cooldown de 2 minutos após vitória
+                    self.save_result(asset, action, strategy, "WIN", win_amount)
                     self.cooldowns[asset] = time.time() + 120
-                    if asset in self.active_trades:
-                        del self.active_trades[asset]
+                    post_log(f"WIN em {asset}! Lucro: ${win_amount}")
                 elif win_amount < 0:
-                    post_log(f"LOSS em {asset}! Perda: ${amount}")
                     if self.martingale > 0 and not is_mg:
-                        post_log(f"Aplicando Martingale nível 1 em {asset}...")
-                        self.execute_trade_pro(asset,
-                                               action,
-                                               strategy,
-                                               amount * 2.2,
-                                               is_mg=True)
+                        self.execute_trade_pro(asset, action, strategy, amount * 2.2, is_mg=True)
                     else:
                         self.stats["losses"] += 1
                         self.strategy_performance[strategy]["losses"] += 1
-                        self.save_result(asset, action, strategy, "LOSS",
-                                         -amount)
-                        if asset in self.active_trades:
-                            del self.active_trades[asset]
-                else:
-                    post_log(f"EMPATE em {asset}.")
-                    if asset in self.active_trades:
-                        del self.active_trades[asset]
+                        self.save_result(asset, action, strategy, "LOSS", -amount)
+                        post_log(f"LOSS em {asset}!")
+                
+                if asset in self.active_trades: del self.active_trades[asset]
             except Exception as e:
                 post_log(f"Erro ao gerenciar trade: {str(e)}")
-                if asset in self.active_trades:
-                    del self.active_trades[asset]
+                if asset in self.active_trades: del self.active_trades[asset]
 
     def save_result(self, asset, action, strategy, result, profit):
         with open(CSV_FILE, 'a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([
-                datetime.now().strftime("%H:%M:%S"), asset, "OTC", action,
-                strategy, result, profit
-            ])
-
+            writer.writerow([datetime.now().strftime("%H:%M:%S"), asset, "OTC", action, strategy, result, profit])
         try:
-            requests.post(API_URL,
-                          json={
-                              "asset": asset,
-                              "action": action,
-                              "strategy": strategy,
-                              "confidence": 100,
-                              "result": result,
-                              "price": str(profit)
-                          },
-                          timeout=5)
-        except:
-            pass
+            requests.post(API_URL, json={"asset": asset, "action": action, "strategy": strategy, "confidence": 100, "result": result, "price": str(profit)}, timeout=5)
+        except: pass
 
     def start_engine(self):
-        post_log(
-            f"Motor de análise iniciado para ativos: {', '.join(self.assets)}")
-        print(f"\nMotor Iniciado! Analisando Ciclos e Assertividade...")
-
+        post_log(f"Motor de análise iniciado para: {', '.join(self.assets)}")
         while self.running:
             try:
                 server_time = self.get_precision_time()
                 now = datetime.fromtimestamp(server_time)
-
-                if now.second % 10 == 0:
-                    print(f"Aguardando ciclo... {now.strftime('%H:%M:%S')}",
-                          end='\r')
-
                 if now.second == 58:
-                    post_log(
-                        f"Iniciando ciclo de análise para quadrante das {now.strftime('%H:%M')}"
-                    )
                     for asset in self.assets:
-                        # Verificar se o ativo está em operação ou em cooldown
-                        if asset in self.active_trades:
-                            continue
+                        if asset in self.active_trades: continue
+                        if asset in self.cooldowns and time.time() < self.cooldowns[asset]: continue
                         
-                        if asset in self.cooldowns:
-                            if time.time() < self.cooldowns[asset]:
-                                remaining = int(self.cooldowns[asset] - time.time())
-                                if remaining % 30 == 0: # Logar a cada 30s de cooldown
-                                    post_log(f"{asset} em cooldown por mais {remaining}s.")
-                                continue
-                            else:
-                                del self.cooldowns[asset]
-
-                        if self.iq:
-                            try:
-                                candles = self.iq.get_candles(
-                                    asset, 60, 10, server_time)
-                                if not candles or len(candles) < 3:
-                                    post_log(
-                                        f"Aviso: {asset} não retornou candles suficientes."
-                                    )
-                                    continue
-
-                                df = pd.DataFrame(candles)
-                                df['close'] = df['close'].astype(float)
-                                df['open'] = df['open'].astype(float)
-
-                                strategies = self.analyze_strategies(asset, df)
-                                if not strategies: continue
-
+                        candles = self.iq.get_candles(asset, 60, 10, server_time)
+                        if candles and len(candles) >= 3:
+                            df = pd.DataFrame(candles)
+                            df['close'] = df['close'].astype(float)
+                            df['open'] = df['open'].astype(float)
+                            strategies = self.analyze_strategies(asset, df)
+                            if strategies:
                                 best = max(strategies, key=lambda x: x['conf'])
-
                                 if best['conf'] >= self.min_confidence:
-                                    self.execute_trade_pro(
-                                        asset, best['action'], best['name'],
-                                        self.trade_amount)
-                                else:
-                                    post_log(
-                                        f"Sinal fraco em {asset}: {best['name']} com {best['conf']}% de confiança."
-                                    )
-                            except Exception as e:
-                                post_log(f"Erro ao analisar {asset}: {str(e)}")
-
+                                    self.execute_trade_pro(asset, best['action'], best['name'], self.trade_amount)
                     time.sleep(2)
                 time.sleep(0.5)
-            except KeyboardInterrupt:
-                post_log("Motor parado pelo usuário.")
-                self.running = False
             except Exception as e:
-                post_log(f"Erro no loop principal: {str(e)}")
+                post_log(f"Erro no loop: {str(e)}")
                 time.sleep(1)
 
     def menu(self):
         while True:
-            print(
-                f"\nPLACAR: {self.stats['wins']}W - {self.stats['losses']}L | Conta: {self.balance_type}"
-            )
-            print("1. Iniciar Operações Automáticas (Múltiplas Estratégias)")
-            print("2. Ajustar Valor Entrada (Atual: ${self.trade_amount})")
-            print("3. Ver Ranking de Estratégias")
+            print(f"\nPLACAR: {self.stats['wins']}W - {self.stats['losses']}L | Conta: {self.balance_type}")
+            print("1. Iniciar Operações Automáticas (Com IA)")
+            print("2. Ajustar Valor Entrada (${self.trade_amount})")
             print("0. Sair")
-
             c = input("\n> ")
             if c == "1": self.start_engine()
-            elif c == "2":
-                try:
-                    self.trade_amount = float(input("Novo valor: "))
-                except:
-                    print("Valor inválido!")
-            elif c == "3":
-                print("\nRanking de Assertividade (Sessão Atual):")
-                for s, p in self.strategy_performance.items():
-                    total = p['wins'] + p['losses']
-                    rate = (p['wins'] / total * 100) if total > 0 else 0
-                    print(f"{s}: {p['wins']}W - {p['losses']}L ({rate:.1f}%)")
-            elif c == "0":
-                break
-
+            elif c == "2": self.trade_amount = float(input("Novo valor: "))
+            elif c == "0": break
 
 if __name__ == "__main__":
     print_banner()
