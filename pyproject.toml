@@ -4,8 +4,12 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "iqoptionapi",
     "numpy>=2.4.2",
     "openai>=2.21.0",
     "pandas>=3.0.0",
     "requests>=2.32.5",
 ]
+
+[tool.uv.sources]
+iqoptionapi = { git = "https://github.com/Lu-Yi-Hsun/iqoptionapi.git" }
