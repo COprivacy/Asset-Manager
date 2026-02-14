@@ -22,8 +22,8 @@ CSV_FILE = "trades_history.csv"
 
 # Replit AI Client
 client = OpenAI(
-    base_url="https://api.replit.com/ai/v1",
-    api_key=os.environ.get("REPLIT_API_KEY") # This will be available if the integration is set up
+    base_url=os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL", "https://api.replit.com/ai/v1"),
+    api_key=os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY", "dummy-key")
 )
 
 def post_log(message):
