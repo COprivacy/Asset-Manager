@@ -45,7 +45,7 @@ class TradingBot:
     def __init__(self):
         self.iq = None
         self.assets = ["GBPUSD-OTC", "EURUSD", "GBPUSD"]
-        self.timeframe = 60  # M1
+        self.timeframe = 60  # Tempo gráfico atual (em segundos)
         self.min_confidence = 75 
         self.balance_type = "PRACTICE"
         self.trade_amount = 2.0
@@ -93,6 +93,14 @@ class TradingBot:
         print(f"Conectado! Saldo: {balance}")
         return True
 
+    def get_precision_time(self):
+        try:
+            if self.iq:
+                return self.iq.get_server_timestamp()
+            return int(time.time())
+        except:
+            return int(time.time())
+
     def calculate_indicators(self, df):
         # 1. EMAs
         df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
@@ -107,16 +115,13 @@ class TradingBot:
         return df
 
     def check_filters(self):
-        # 2. Filtros de horário (08:00-17:00 GMT)
         now_gmt = datetime.utcnow()
         if not (8 <= now_gmt.hour < 17):
             return False, "Fora do horário operacional (08:00-17:00 GMT)"
             
-        # Notícias high-impact (manual)
-        news_times = ["13:30"] # Exemplo: NFP
+        news_times = ["13:30"]
         current_time_str = now_gmt.strftime("%H:%M")
         for nt in news_times:
-            # Simplificação: evita 30min antes/depois se for o mesmo horário HH:MM
             if current_time_str == nt:
                 return False, "Notícia de alto impacto agora"
         
@@ -124,26 +129,29 @@ class TradingBot:
 
     def get_ai_opinion(self, asset, df):
         try:
-            # 5. Melhoria na análise: detectando padrões básicos para o prompt
             last_candle = df.iloc[-1]
             prev_candle = df.iloc[-2]
             
-            # Padrões simples
+            # Padrões de Candles
             is_hammer = (min(last_candle['open'], last_candle['close']) - last_candle['low']) > (abs(last_candle['open'] - last_candle['close']) * 2)
             is_engulfing_bull = (last_candle['close'] > prev_candle['open']) and (last_candle['open'] < prev_candle['close']) and (prev_candle['close'] < prev_candle['open'])
+            is_engulfing_bear = (last_candle['close'] < prev_candle['open']) and (last_candle['open'] > prev_candle['close']) and (prev_candle['close'] > prev_candle['open'])
             
-            patterns_info = f"Patterns: Hammer={is_hammer}, BullishEngulfing={is_engulfing_bull}"
+            patterns_info = f"Patterns: Hammer={is_hammer}, BullishEngulfing={is_engulfing_bull}, BearishEngulfing={is_engulfing_bear}"
             
-            last_candles = df.tail(5).to_dict('records')
-            prompt = f"Analise estes últimos 5 candles de 1min para {asset}: {json.dumps(last_candles)}. " \
-                     f"Indicadores Atuais: RSI={last_candle['rsi']:.2f}, EMA20={last_candle['ema20']:.5f}, EMA50={last_candle['ema50']:.5f}. " \
+            tf_desc = f"{self.timeframe // 60}min"
+            last_candles = df.tail(10).to_dict('records') # Envia 10 candles para mais contexto
+            
+            prompt = f"Analise o gráfico de {tf_desc} para {asset}. Candles: {json.dumps(last_candles)}. " \
+                     f"Indicadores: RSI={last_candle['rsi']:.2f}, EMA20={last_candle['ema20']:.5f}, EMA50={last_candle['ema50']:.5f}. " \
                      f"{patterns_info}. " \
-                     f"Explique seu raciocínio detalhadamente considerando Price Action + Volume + Indicadores e finalize com um objeto JSON contendo 'action' (CALL, PUT ou WAIT) e 'confidence' (0-100). " \
-                     f"Formato esperado: 'Pensamento: <seu raciocínio> JSON: {{\"action\": \"...\", \"confidence\": ...}}'"
+                     f"Identifique Suportes/Resistências próximos. Considere a tendência das EMAs e RSI. " \
+                     f"Decida entre CALL, PUT ou WAIT com % de confiança (0-100). " \
+                     f"Responda EXATAMENTE neste formato: 'Pensamento: <breve lógica> JSON: {{\"action\": \"...\", \"confidence\": ...}}'"
             
             response = client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role": "system", "content": "Você é um analista expert em Price Action e Confluência Técnica."},
+                messages=[{"role": "system", "content": f"Você é um analista de trading profissional focado em {tf_desc}. Use Price Action, Volume e Indicadores Técnicos."},
                           {"role": "user", "content": prompt}]
             )
             
@@ -163,22 +171,22 @@ class TradingBot:
                 
             result = json.loads(json_part)
             
-            # 1. Regras de Confluência
+            # Confluência Extra
             price = last_candle['close']
             rsi = last_candle['rsi']
             ema20 = last_candle['ema20']
             
             if result['action'] == 'CALL':
                 if not (price > ema20 and rsi < 70):
-                    result['confidence'] -= 20
-                    post_log("⚠️ Confiança reduzida: CALL sem confluência EMA20/RSI")
+                    result['confidence'] -= 15
+                    post_log(f"⚠️ {asset}: CALL sem confluência total (Preço vs EMA20 ou RSI)")
             elif result['action'] == 'PUT':
                 if not (price < ema20 and rsi > 30):
-                    result['confidence'] -= 20
-                    post_log("⚠️ Confiança reduzida: PUT sem confluência EMA20/RSI")
+                    result['confidence'] -= 15
+                    post_log(f"⚠️ {asset}: PUT sem confluência total (Preço vs EMA20 ou RSI)")
             
-            post_log(f"🧠 IA Analisando {asset}: {thought}")
-            post_log(f"🎯 Decisão Final: {result['action']} ({result['confidence']}%)")
+            post_log(f"🧠 IA ({tf_desc}) {asset}: {thought}")
+            post_log(f"🎯 Decisão: {result['action']} ({result['confidence']}%)")
             
             return result
         except Exception as e:
@@ -186,7 +194,6 @@ class TradingBot:
             return {"action": "WAIT", "confidence": 0}
 
     def analyze_strategies(self, asset, df):
-        # 2. Filtro de horário
         allowed, reason = self.check_filters()
         if not allowed:
             post_log(f"🚫 {asset}: {reason}")
@@ -202,7 +209,6 @@ class TradingBot:
         }]
 
     def execute_trade_pro(self, asset, action, strategy, amount, is_mg=False):
-        # 3. Gerenciamento de Risco: Stake 1% do bankroll
         self.trade_amount = max(2.0, self.bankroll * 0.01)
         amount = self.trade_amount if not is_mg else amount
         
@@ -211,7 +217,9 @@ class TradingBot:
         
         if self.iq:
             try:
-                check, trade_id = self.iq.buy(amount, asset, action.lower(), 1)
+                # Expiração automática baseada no timeframe selecionado
+                duration = self.timeframe // 60
+                check, trade_id = self.iq.buy(amount, asset, action.lower(), duration)
                 if check:
                     threading.Thread(target=self.manage_trade, args=(trade_id, asset, action, strategy, amount, is_mg)).start()
                 else:
@@ -222,7 +230,8 @@ class TradingBot:
                 if asset in self.active_trades: del self.active_trades[asset]
 
     def manage_trade(self, trade_id, asset, action, strategy, amount, is_mg):
-        time.sleep(65)
+        # Aguarda tempo de expiração + buffer
+        time.sleep(self.timeframe + 5)
         if self.iq:
             try:
                 check, win_amount = self.iq.check_win_v4(trade_id)
@@ -231,7 +240,7 @@ class TradingBot:
                     self.bankroll += win_amount
                     self.strategy_performance[strategy]["wins"] += 1
                     self.save_result(asset, action, strategy, "WIN", win_amount)
-                    self.cooldowns[asset] = time.time() + 120
+                    self.cooldowns[asset] = time.time() + (self.timeframe * 2)
                     post_log(f"✅ WIN em {asset}! Lucro: ${win_amount} | Saldo: ${self.bankroll:.2f}")
                 elif win_amount < 0:
                     self.bankroll -= amount
@@ -264,17 +273,20 @@ class TradingBot:
         except: pass
 
     def start_engine(self):
-        post_log(f"Motor de análise iniciado para: {', '.join(self.assets)}")
+        tf_desc = f"{self.timeframe // 60}M"
+        post_log(f"Motor iniciado em {tf_desc} para: {', '.join(self.assets)}")
         while self.running:
             try:
                 server_time = self.get_precision_time()
                 now = datetime.fromtimestamp(server_time)
-                if now.second == 58:
+                
+                # Sincroniza com o fechamento do candle do timeframe selecionado
+                if now.second == 58 and (now.minute + 1) % (self.timeframe // 60) == 0:
                     for asset in self.assets:
                         if asset in self.active_trades: continue
                         if asset in self.cooldowns and time.time() < self.cooldowns[asset]: continue
                         
-                        candles = self.iq.get_candles(asset, 60, 60, server_time) # Pegar 60 para EMAs
+                        candles = self.iq.get_candles(asset, self.timeframe, 60, server_time)
                         if candles and len(candles) >= 50:
                             df = pd.DataFrame(candles)
                             df['close'] = df['close'].astype(float)
@@ -295,14 +307,22 @@ class TradingBot:
     def menu(self):
         while True:
             winrate = (self.stats['wins'] / (self.stats['wins'] + self.stats['losses']) * 100) if (self.stats['wins'] + self.stats['losses']) > 0 else 0
+            tf_desc = f"{self.timeframe // 60}M"
             print(f"\nPLACAR: {self.stats['wins']}W - {self.stats['losses']}L (WR: {winrate:.1f}%)")
-            print(f"BANKROLL: ${self.bankroll:.2f} | MODO: {self.balance_type}")
-            print("1. Iniciar Operações Automáticas (EMA + RSI + TimeFilter)")
-            print("2. Ajustar Saldo Inicial (Simulado)")
+            print(f"BANKROLL: ${self.bankroll:.2f} | TIMEFRAME: {tf_desc}")
+            print("1. Iniciar Operações Automáticas")
+            print("2. Selecionar Tempo Gráfico (M1, M5, M15)")
+            print("3. Ajustar Saldo Inicial")
             print("0. Sair")
             c = input("\n> ")
             if c == "1": self.start_engine()
-            elif c == "2": self.bankroll = float(input("Novo bankroll: "))
+            elif c == "2":
+                print("\n1. M1 | 2. M5 | 3. M15")
+                t_choice = input("Opção: ")
+                if t_choice == "1": self.timeframe = 60
+                elif t_choice == "2": self.timeframe = 300
+                elif t_choice == "3": self.timeframe = 900
+            elif c == "3": self.bankroll = float(input("Novo bankroll: "))
             elif c == "0": break
 
 if __name__ == "__main__":
