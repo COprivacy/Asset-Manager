@@ -125,21 +125,18 @@ class TradingBot:
             return {"action": "WAIT", "confidence": 0}
 
     def analyze_strategies(self, asset, df):
-        last_3 = df.tail(3)
-        greens = sum(1 for _, row in last_3.iterrows() if row['close'] > row['open'])
-        reds = 3 - greens
-
         strategies = []
-        # MHI 1
-        action = "CALL" if greens < reds else "PUT"
-        strategies.append({"name": "MHI 1", "action": action, "conf": 80})
-
-        # IA Opinion como reforço
+        
+        # IA Opinion como única estratégia
         ai_res = self.get_ai_opinion(asset, df)
         if ai_res['action'] != "WAIT":
-            strategies.append({"name": "AI Opinion", "action": ai_res['action'], "conf": ai_res['confidence']})
+            strategies.append({
+                "name": "AI Opinion", 
+                "action": ai_res['action'], 
+                "conf": ai_res['confidence']
+            })
 
-        # Bônus de performance
+        # Bônus de performance para a IA
         for s in strategies:
             perf = self.strategy_performance.get(s['name'], {"wins": 0, "losses": 0})
             total = perf['wins'] + perf['losses']
