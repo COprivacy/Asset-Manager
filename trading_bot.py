@@ -109,15 +109,22 @@ class TradingBot:
         try:
             # Preparar dados simplificados para a IA
             last_candles = df.tail(5).to_dict('records')
-            prompt = f"Analise estes últimos 5 candles de 1min para {asset}: {json.dumps(last_candles)}. Responda APENAS com um JSON contendo 'action' (CALL, PUT ou WAIT) e 'confidence' (0-100)."
+            prompt = f"Analise estes últimos 5 candles de 1min para {asset}: {json.dumps(last_candles)}. Responda APENAS com um objeto JSON válido contendo 'action' (CALL, PUT ou WAIT) e 'confidence' (0-100). Não inclua markdown ou explicações."
             
             response = client.chat.completions.create(
                 model="gpt-4o", # Model available via Replit AI integration
-                messages=[{"role": "system", "content": "Você é um analista expert em Price Action."},
+                messages=[{"role": "system", "content": "Você é um analista expert em Price Action que responde apenas em JSON puro."},
                           {"role": "user", "content": prompt}]
             )
             
-            result = json.loads(response.choices[0].message.content)
+            content = response.choices[0].message.content.strip()
+            # Remover possíveis blocos de código markdown
+            if content.startswith("```json"):
+                content = content[7:-3].strip()
+            elif content.startswith("```"):
+                content = content[3:-3].strip()
+                
+            result = json.loads(content)
             post_log(f"IA Sugere: {result['action']} ({result['confidence']}%)")
             return result
         except Exception as e:
