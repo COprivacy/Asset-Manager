@@ -1,0 +1,46 @@
+Você é o agente IA responsável pelo bot de trading GBPUSD (análise de 5 candles M1 com Price Action + volume). O bot atualmente analisa os últimos 5 candles de 1 minuto, descreve cada um (abertura, fechamento, máxima, mínima, volume), identifica padrões (força compradora/vendedora, rejeições, indecisão), considera volume e decide entre CALL (alta), PUT (baixa) ou WAIT, com % de confiança.
+
+O bot já funciona bem em OTC (plataformas como IQ Option/Pocket), mas agora queremos adaptá-lo e melhorá-lo fortemente para o mercado aberto (spot real forex, via corretoras como MetaTrader ou dados reais).
+
+Implemente as seguintes melhorias no código do bot, em ordem de prioridade. Faça alterações progressivas, comente o código novo e explique o que mudou. Use Python padrão, pandas para dados, e evite instalar pacotes novos (use só o que já tem disponível no ambiente).
+
+1. **Confluência com indicadores simples**:
+   - Adicione EMA 20 e EMA 50 (exponencial) calculadas nos últimos 20-50 candles (use pandas ewm).
+   - Adicione RSI 14 (use fórmula padrão ou pandas-ta se disponível; senão implemente manualmente).
+   - Regra: CALL só se PA altista + preço > EMA20 + RSI < 70 (não sobrecomprado).
+   - PUT só se PA baixista + preço < EMA20 + RSI > 30 (não sobrevendido).
+   - Se não alinhar, force WAIT ou reduza confiança em 20%.
+
+2. **Filtros de horário e notícias (simples)**:
+   - Adicione verificação de horário: só opere entre 08:00-17:00 GMT (sessão Londres/NY), fora disso force WAIT.
+   - (Opcional inicial) Crie uma lista manual de horários de notícias high-impact (ex: NFP primeira sexta do mês 13:30 GMT) e force WAIT 30min antes/depois. Depois podemos integrar API.
+
+3. **Gerenciamento de risco básico**:
+   - Adicione bankroll inicial (ex: $1000).
+   - Calcule stake dinâmico: risco máximo 1% por trade (ex: se CALL/PUT com 70%+, stake = bankroll * 0.01 / (payout esperado -1), mas simplifique para stake fixo $10-20 se binário).
+   - Registre trades em um log simples (CSV ou lista): timestamp, decisão, preço entrada, resultado simulado, bankroll atual.
+   - Mostre winrate, P&L e drawdown máximo no final de cada sessão.
+
+4. **Adaptação Spot vs OTC**:
+   - Adicione um modo 'spot_real': compare o preço atual com um valor de referência spot (ex: hardcode 1.365 para testes de fev/2026, ou depois use API gratuita como Alpha Vantage se possível).
+   - Se preço desalinhado > 50 pips do spot esperado → marque como OTC e aumente confiança em PA micro (+10-15%).
+   - Se alinhado (dentro de 20 pips) → priorize volume real e confluência, reduza confiança em setups sem volume alto.
+
+5. **Melhoria na análise de candles**:
+   - Detecte padrões clássicos: pinbar/hammer (sombra longa oposta ao corpo), engolfo altista/baixa, doji.
+   - Dê score interno (0-100) baseado em padrões + volume + confluência.
+   - Ex: score > 80 → CALL/PUT com confiança alta; 50-80 → confiança média; <50 → WAIT.
+
+6. **Saída mais clara e logs**:
+   - Na conclusão, inclua:
+     - Decisão final: CALL / PUT / WAIT + % confiança
+     - Razões principais (PA + volume + EMA/RSI + horário)
+     - Nível chave próximo (suporte/resistência simples: min/max dos últimos 10 candles)
+     - Sugestão de expiração (ex: 1-5 min para M1)
+   - Salve log com todos os candles analisados + decisão.
+
+Comece implementando as prioridades 1, 2 e 3 primeiro. Depois teste com os dados dos candles de 15/02/2026 (~1.365xx) que já analisamos antes e mostre como a decisão muda com as novas regras (ex: o WAIT de volume baixo ficaria ainda mais forte com RSI e EMA).
+
+Após cada mudança, rode um teste com os últimos candles conhecidos e mostre a saída completa da análise.
+
+Vá implementando passo a passo e me avise quando terminar cada parte para eu aprovar ou ajustar.

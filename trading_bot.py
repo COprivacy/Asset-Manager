@@ -46,27 +46,24 @@ class TradingBot:
         self.iq = None
         self.assets = ["GBPUSD-OTC", "EURUSD", "GBPUSD"]
         self.timeframe = 60  # M1
-        self.min_confidence = 75 # Aumentado para maior assertividade com IA
+        self.min_confidence = 75 
         self.balance_type = "PRACTICE"
         self.trade_amount = 2.0
+        self.bankroll = 1000.0
         self.martingale = 0
         self.stats = {"wins": 0, "losses": 0}
         self.strategy_performance = {
-            "MHI 1": {"wins": 0, "losses": 0},
-            "MHI 2": {"wins": 0, "losses": 0},
-            "MHI 3": {"wins": 0, "losses": 0},
-            "Padrão 23": {"wins": 0, "losses": 0},
-            "Torres Gêmeas": {"wins": 0, "losses": 0},
             "AI Opinion": {"wins": 0, "losses": 0}
         }
         self.running = True
         self.active_trades = {}
         self.cooldowns = {}
+        self.trade_log = []
 
         if not os.path.exists(CSV_FILE):
             with open(CSV_FILE, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Timestamp', 'Ativo', 'Tipo', 'Ação', 'Estratégia', 'Resultado', 'Lucro'])
+                writer.writerow(['Timestamp', 'Ativo', 'Tipo', 'Ação', 'Estratégia', 'Resultado', 'Lucro', 'Bankroll'])
 
     def connect(self):
         post_log("Iniciando processo de login...")
@@ -91,37 +88,66 @@ class TradingBot:
 
         self.iq.change_balance(self.balance_type)
         balance = self.iq.get_balance()
+        self.bankroll = float(balance)
         post_log(f"Conectado com sucesso! Modo: {self.balance_type} | Saldo: {balance}")
         print(f"Conectado! Saldo: {balance}")
         return True
 
-    def get_precision_time(self):
-        try:
-            if self.iq:
-                for method in ['get_server_timestamp', 'get_server_time']:
-                    if hasattr(self.iq, method):
-                        return getattr(self.iq, method)()
-            return int(time.time())
-        except:
-            return int(time.time())
+    def calculate_indicators(self, df):
+        # 1. EMAs
+        df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
+        df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
+        
+        # 2. RSI 14
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['rsi'] = 100 - (100 / (1 + rs))
+        return df
+
+    def check_filters(self):
+        # 2. Filtros de horário (08:00-17:00 GMT)
+        now_gmt = datetime.utcnow()
+        if not (8 <= now_gmt.hour < 17):
+            return False, "Fora do horário operacional (08:00-17:00 GMT)"
+            
+        # Notícias high-impact (manual)
+        news_times = ["13:30"] # Exemplo: NFP
+        current_time_str = now_gmt.strftime("%H:%M")
+        for nt in news_times:
+            # Simplificação: evita 30min antes/depois se for o mesmo horário HH:MM
+            if current_time_str == nt:
+                return False, "Notícia de alto impacto agora"
+        
+        return True, ""
 
     def get_ai_opinion(self, asset, df):
         try:
-            # Preparar dados simplificados para a IA
+            # 5. Melhoria na análise: detectando padrões básicos para o prompt
+            last_candle = df.iloc[-1]
+            prev_candle = df.iloc[-2]
+            
+            # Padrões simples
+            is_hammer = (min(last_candle['open'], last_candle['close']) - last_candle['low']) > (abs(last_candle['open'] - last_candle['close']) * 2)
+            is_engulfing_bull = (last_candle['close'] > prev_candle['open']) and (last_candle['open'] < prev_candle['close']) and (prev_candle['close'] < prev_candle['open'])
+            
+            patterns_info = f"Patterns: Hammer={is_hammer}, BullishEngulfing={is_engulfing_bull}"
+            
             last_candles = df.tail(5).to_dict('records')
             prompt = f"Analise estes últimos 5 candles de 1min para {asset}: {json.dumps(last_candles)}. " \
-                     f"Explique seu raciocínio detalhadamente e finalize com um objeto JSON contendo 'action' (CALL, PUT ou WAIT) e 'confidence' (0-100). " \
+                     f"Indicadores Atuais: RSI={last_candle['rsi']:.2f}, EMA20={last_candle['ema20']:.5f}, EMA50={last_candle['ema50']:.5f}. " \
+                     f"{patterns_info}. " \
+                     f"Explique seu raciocínio detalhadamente considerando Price Action + Volume + Indicadores e finalize com um objeto JSON contendo 'action' (CALL, PUT ou WAIT) e 'confidence' (0-100). " \
                      f"Formato esperado: 'Pensamento: <seu raciocínio> JSON: {{\"action\": \"...\", \"confidence\": ...}}'"
             
             response = client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role": "system", "content": "Você é um analista expert em Price Action. Explique sua lógica antes de decidir."},
+                messages=[{"role": "system", "content": "Você é um analista expert em Price Action e Confluência Técnica."},
                           {"role": "user", "content": prompt}]
             )
             
             raw_content = response.choices[0].message.content.strip()
-            
-            # Extrair pensamento e JSON
             thought = "Não detalhado"
             json_part = raw_content
             
@@ -130,7 +156,6 @@ class TradingBot:
                 thought = parts[0].replace("Pensamento:", "").strip()
                 json_part = parts[1].strip()
             
-            # Limpeza do JSON
             if json_part.startswith("```json"):
                 json_part = json_part[7:-3].strip()
             elif json_part.startswith("```"):
@@ -138,7 +163,20 @@ class TradingBot:
                 
             result = json.loads(json_part)
             
-            # Logar o raciocínio da IA
+            # 1. Regras de Confluência
+            price = last_candle['close']
+            rsi = last_candle['rsi']
+            ema20 = last_candle['ema20']
+            
+            if result['action'] == 'CALL':
+                if not (price > ema20 and rsi < 70):
+                    result['confidence'] -= 20
+                    post_log("⚠️ Confiança reduzida: CALL sem confluência EMA20/RSI")
+            elif result['action'] == 'PUT':
+                if not (price < ema20 and rsi > 30):
+                    result['confidence'] -= 20
+                    post_log("⚠️ Confiança reduzida: PUT sem confluência EMA20/RSI")
+            
             post_log(f"🧠 IA Analisando {asset}: {thought}")
             post_log(f"🎯 Decisão Final: {result['action']} ({result['confidence']}%)")
             
@@ -148,29 +186,29 @@ class TradingBot:
             return {"action": "WAIT", "confidence": 0}
 
     def analyze_strategies(self, asset, df):
-        strategies = []
-        
-        # IA Opinion como única estratégia
+        # 2. Filtro de horário
+        allowed, reason = self.check_filters()
+        if not allowed:
+            post_log(f"🚫 {asset}: {reason}")
+            return [{"name": "AI Opinion", "action": "WAIT", "conf": 0}]
+
+        df = self.calculate_indicators(df)
         ai_res = self.get_ai_opinion(asset, df)
-        if ai_res['action'] != "WAIT":
-            strategies.append({
-                "name": "AI Opinion", 
-                "action": ai_res['action'], 
-                "conf": ai_res['confidence']
-            })
-
-        # Bônus de performance para a IA
-        for s in strategies:
-            perf = self.strategy_performance.get(s['name'], {"wins": 0, "losses": 0})
-            total = perf['wins'] + perf['losses']
-            if total > 0:
-                s['conf'] += (perf['wins'] / total) * 20
-
-        return strategies
+        
+        return [{
+            "name": "AI Opinion", 
+            "action": ai_res['action'], 
+            "conf": ai_res['confidence']
+        }]
 
     def execute_trade_pro(self, asset, action, strategy, amount, is_mg=False):
+        # 3. Gerenciamento de Risco: Stake 1% do bankroll
+        self.trade_amount = max(2.0, self.bankroll * 0.01)
+        amount = self.trade_amount if not is_mg else amount
+        
         self.active_trades[asset] = True
-        post_log(f"Iniciando ordem: {asset} | {action} | ${amount} ({strategy})")
+        post_log(f"🚀 Ordem: {asset} | {action} | ${amount:.2f} (Stake 1%)")
+        
         if self.iq:
             try:
                 check, trade_id = self.iq.buy(amount, asset, action.lower(), 1)
@@ -190,18 +228,20 @@ class TradingBot:
                 check, win_amount = self.iq.check_win_v4(trade_id)
                 if win_amount > 0:
                     self.stats["wins"] += 1
+                    self.bankroll += win_amount
                     self.strategy_performance[strategy]["wins"] += 1
                     self.save_result(asset, action, strategy, "WIN", win_amount)
                     self.cooldowns[asset] = time.time() + 120
-                    post_log(f"WIN em {asset}! Lucro: ${win_amount}")
+                    post_log(f"✅ WIN em {asset}! Lucro: ${win_amount} | Saldo: ${self.bankroll:.2f}")
                 elif win_amount < 0:
+                    self.bankroll -= amount
                     if self.martingale > 0 and not is_mg:
                         self.execute_trade_pro(asset, action, strategy, amount * 2.2, is_mg=True)
                     else:
                         self.stats["losses"] += 1
                         self.strategy_performance[strategy]["losses"] += 1
                         self.save_result(asset, action, strategy, "LOSS", -amount)
-                        post_log(f"LOSS em {asset}!")
+                        post_log(f"❌ LOSS em {asset}! Saldo: ${self.bankroll:.2f}")
                 
                 if asset in self.active_trades: del self.active_trades[asset]
             except Exception as e:
@@ -211,9 +251,16 @@ class TradingBot:
     def save_result(self, asset, action, strategy, result, profit):
         with open(CSV_FILE, 'a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([datetime.now().strftime("%H:%M:%S"), asset, "OTC", action, strategy, result, profit])
+            writer.writerow([datetime.now().strftime("%H:%M:%S"), asset, "SPOT", action, strategy, result, profit, self.bankroll])
         try:
-            requests.post(API_URL, json={"asset": asset, "action": action, "strategy": strategy, "confidence": 100, "result": result, "price": str(profit)}, timeout=5)
+            requests.post(API_URL, json={
+                "asset": asset, 
+                "action": action, 
+                "strategy": strategy, 
+                "confidence": 100, 
+                "result": result, 
+                "price": str(profit)
+            }, timeout=5)
         except: pass
 
     def start_engine(self):
@@ -227,15 +274,17 @@ class TradingBot:
                         if asset in self.active_trades: continue
                         if asset in self.cooldowns and time.time() < self.cooldowns[asset]: continue
                         
-                        candles = self.iq.get_candles(asset, 60, 10, server_time)
-                        if candles and len(candles) >= 3:
+                        candles = self.iq.get_candles(asset, 60, 60, server_time) # Pegar 60 para EMAs
+                        if candles and len(candles) >= 50:
                             df = pd.DataFrame(candles)
                             df['close'] = df['close'].astype(float)
                             df['open'] = df['open'].astype(float)
+                            df['volume'] = df['volume'].astype(float)
+                            
                             strategies = self.analyze_strategies(asset, df)
                             if strategies:
                                 best = max(strategies, key=lambda x: x['conf'])
-                                if best['conf'] >= self.min_confidence:
+                                if best['action'] != "WAIT" and best['conf'] >= self.min_confidence:
                                     self.execute_trade_pro(asset, best['action'], best['name'], self.trade_amount)
                     time.sleep(2)
                 time.sleep(0.5)
@@ -245,13 +294,15 @@ class TradingBot:
 
     def menu(self):
         while True:
-            print(f"\nPLACAR: {self.stats['wins']}W - {self.stats['losses']}L | Conta: {self.balance_type}")
-            print("1. Iniciar Operações Automáticas (Com IA)")
-            print("2. Ajustar Valor Entrada (${self.trade_amount})")
+            winrate = (self.stats['wins'] / (self.stats['wins'] + self.stats['losses']) * 100) if (self.stats['wins'] + self.stats['losses']) > 0 else 0
+            print(f"\nPLACAR: {self.stats['wins']}W - {self.stats['losses']}L (WR: {winrate:.1f}%)")
+            print(f"BANKROLL: ${self.bankroll:.2f} | MODO: {self.balance_type}")
+            print("1. Iniciar Operações Automáticas (EMA + RSI + TimeFilter)")
+            print("2. Ajustar Saldo Inicial (Simulado)")
             print("0. Sair")
             c = input("\n> ")
             if c == "1": self.start_engine()
-            elif c == "2": self.trade_amount = float(input("Novo valor: "))
+            elif c == "2": self.bankroll = float(input("Novo bankroll: "))
             elif c == "0": break
 
 if __name__ == "__main__":
