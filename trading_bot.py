@@ -109,23 +109,39 @@ class TradingBot:
         try:
             # Preparar dados simplificados para a IA
             last_candles = df.tail(5).to_dict('records')
-            prompt = f"Analise estes últimos 5 candles de 1min para {asset}: {json.dumps(last_candles)}. Responda APENAS com um objeto JSON válido contendo 'action' (CALL, PUT ou WAIT) e 'confidence' (0-100). Não inclua markdown ou explicações."
+            prompt = f"Analise estes últimos 5 candles de 1min para {asset}: {json.dumps(last_candles)}. " \
+                     f"Explique seu raciocínio detalhadamente e finalize com um objeto JSON contendo 'action' (CALL, PUT ou WAIT) e 'confidence' (0-100). " \
+                     f"Formato esperado: 'Pensamento: <seu raciocínio> JSON: {{\"action\": \"...\", \"confidence\": ...}}'"
             
             response = client.chat.completions.create(
-                model="gpt-4o", # Model available via Replit AI integration
-                messages=[{"role": "system", "content": "Você é um analista expert em Price Action que responde apenas em JSON puro."},
+                model="gpt-4o",
+                messages=[{"role": "system", "content": "Você é um analista expert em Price Action. Explique sua lógica antes de decidir."},
                           {"role": "user", "content": prompt}]
             )
             
-            content = response.choices[0].message.content.strip()
-            # Remover possíveis blocos de código markdown
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
-            elif content.startswith("```"):
-                content = content[3:-3].strip()
+            raw_content = response.choices[0].message.content.strip()
+            
+            # Extrair pensamento e JSON
+            thought = "Não detalhado"
+            json_part = raw_content
+            
+            if "JSON:" in raw_content:
+                parts = raw_content.split("JSON:")
+                thought = parts[0].replace("Pensamento:", "").strip()
+                json_part = parts[1].strip()
+            
+            # Limpeza do JSON
+            if json_part.startswith("```json"):
+                json_part = json_part[7:-3].strip()
+            elif json_part.startswith("```"):
+                json_part = json_part[3:-3].strip()
                 
-            result = json.loads(content)
-            post_log(f"IA Sugere: {result['action']} ({result['confidence']}%)")
+            result = json.loads(json_part)
+            
+            # Logar o raciocínio da IA
+            post_log(f"🧠 IA Analisando {asset}: {thought}")
+            post_log(f"🎯 Decisão Final: {result['action']} ({result['confidence']}%)")
+            
             return result
         except Exception as e:
             post_log(f"Erro na análise de IA: {str(e)}")
