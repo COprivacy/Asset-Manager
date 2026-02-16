@@ -19,6 +19,7 @@ export async function registerRoutes(
       const input = api.signals.create.input.extend({
         confidence: z.coerce.number(),
         probability: z.coerce.number().optional(),
+        reasoning: z.string().optional(),
       }).parse(req.body);
       
       const signal = await storage.createSignal(input);

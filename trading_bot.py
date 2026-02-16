@@ -114,19 +114,6 @@ class TradingBot:
         df['rsi'] = 100 - (100 / (1 + rs))
         return df
 
-    def check_filters(self):
-        now_gmt = datetime.utcnow()
-        if not (8 <= now_gmt.hour < 17):
-            return False, "Fora do horário operacional (08:00-17:00 GMT)"
-            
-        news_times = ["13:30"]
-        current_time_str = now_gmt.strftime("%H:%M")
-        for nt in news_times:
-            if current_time_str == nt:
-                return False, "Notícia de alto impacto agora"
-        
-        return True, ""
-
     def get_ai_opinion(self, asset, df):
         try:
             last_candle = df.iloc[-1]
@@ -188,17 +175,24 @@ class TradingBot:
             post_log(f"🧠 IA ({tf_desc}) {asset}: {thought}")
             post_log(f"🎯 Decisão: {result['action']} ({result['confidence']}%)")
             
+            # Send analysis to dashboard even if it's WAIT
+            try:
+                requests.post(API_URL, json={
+                    "asset": asset,
+                    "action": result['action'],
+                    "strategy": f"AI Opinion ({tf_desc})",
+                    "confidence": result['confidence'],
+                    "reasoning": thought,
+                    "result": "ANALYZING"
+                }, timeout=5)
+            except: pass
+
             return result
         except Exception as e:
             post_log(f"Erro na análise de IA: {str(e)}")
             return {"action": "WAIT", "confidence": 0}
 
     def analyze_strategies(self, asset, df):
-        allowed, reason = self.check_filters()
-        if not allowed:
-            post_log(f"🚫 {asset}: {reason}")
-            return [{"name": "AI Opinion", "action": "WAIT", "conf": 0}]
-
         df = self.calculate_indicators(df)
         ai_res = self.get_ai_opinion(asset, df)
         

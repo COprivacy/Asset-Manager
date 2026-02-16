@@ -1,9 +1,10 @@
 import { db } from "./db";
 import { signals, type Signal, type InsertSignal, botLogs, type BotLog, type InsertBotLog } from "@shared/schema";
-import { desc } from "drizzle-orm";
+import { desc, and, ne } from "drizzle-orm";
 
 export interface IStorage {
   getSignals(): Promise<Signal[]>;
+  getAnalysisSignals(): Promise<Signal[]>;
   createSignal(signal: InsertSignal): Promise<Signal>;
   clearSignals(): Promise<void>;
   getLogs(): Promise<BotLog[]>;
@@ -13,6 +14,10 @@ export interface IStorage {
 export class DatabaseStorage implements IStorage {
   async getSignals(): Promise<Signal[]> {
     return await db.select().from(signals).orderBy(desc(signals.timestamp));
+  }
+
+  async getAnalysisSignals(): Promise<Signal[]> {
+    return await db.select().from(signals).where(ne(signals.result, "ANALYZING")).orderBy(desc(signals.timestamp));
   }
 
   async createSignal(insertSignal: InsertSignal): Promise<Signal> {

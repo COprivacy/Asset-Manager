@@ -15,6 +15,7 @@ export const signals = pgTable("signals", {
   assetType: text("asset_type").notNull().default("Normal"),
   volatility: text("volatility").notNull().default("Média"),
   probability: integer("probability"),
+  reasoning: text("reasoning"), // Added for AI logs
 });
 
 export const botLogs = pgTable("bot_logs", {
