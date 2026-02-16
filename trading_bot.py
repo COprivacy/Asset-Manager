@@ -281,13 +281,18 @@ class TradingBot:
                         if asset in self.cooldowns and time.time() < self.cooldowns[asset]: continue
                         
                         candles = self.iq.get_candles(asset, self.timeframe, 60, server_time)
-                        if candles and len(candles) >= 50:
+                        if candles:
                             df = pd.DataFrame(candles)
-                            df['close'] = df['close'].astype(float)
-                            df['open'] = df['open'].astype(float)
-                            df['volume'] = df['volume'].astype(float)
+                            # Verificando se as colunas necessárias existem antes de converter
+                            required_cols = ['close', 'open', 'low', 'high', 'volume']
+                            for col in required_cols:
+                                if col in df.columns:
+                                    df[col] = df[col].astype(float)
+                                else:
+                                    post_log(f"⚠️ Coluna {col} ausente nos dados de {asset}")
                             
-                            strategies = self.analyze_strategies(asset, df)
+                            if len(df) >= 50:
+                                strategies = self.analyze_strategies(asset, df)
                             if strategies:
                                 best = max(strategies, key=lambda x: x['conf'])
                                 if best['action'] != "WAIT" and best['conf'] >= self.min_confidence:
